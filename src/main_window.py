@@ -35,7 +35,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import ai, config, db, exportador
-from .workers import AIWorker, ConexionIAWorker, ImportWorker
+from .workers import AIWorker, ConexionIAWorker, ImportWorker, ProgramaWorker
 
 ROL_TIPO = Qt.UserRole
 ROL_ID = Qt.UserRole + 1
@@ -187,6 +187,7 @@ class MainWindow(QMainWindow):
         self.import_worker = None
         self.ai_worker = None
         self.conexion_worker = None
+        self.programa_worker = None
         self.ia_accion_actual = None
         self.ia_pregunta_actual = None
         self.ia_modelo_actual = None
@@ -248,6 +249,7 @@ class MainWindow(QMainWindow):
         self.texto_view.setReadOnly(True)
         panel_der.addTab(self.texto_view, "Texto")
 
+        panel_der.addTab(self._crear_panel_programa(), "Programa")
         panel_der.addTab(self._crear_panel_cronograma(), "Cronograma de la materia")
         panel_der.addTab(self._crear_panel_ia(), "Analisis IA")
 
@@ -309,6 +311,47 @@ class MainWindow(QMainWindow):
         fila_botones.addWidget(boton_editar)
         fila_botones.addWidget(boton_eliminar)
         layout.addLayout(fila_botones)
+
+        return panel
+
+    def _crear_panel_programa(self):
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+
+        self.programa_label = QLabel("Selecciona una materia para ver su programa.")
+        layout.addWidget(self.programa_label)
+
+        self.boton_analizar_programa = QPushButton("Analizar programa con IA")
+        self.boton_analizar_programa.clicked.connect(self._analizar_programa)
+        self.boton_analizar_programa.setEnabled(False)
+        layout.addWidget(self.boton_analizar_programa)
+
+        layout.addWidget(QLabel("Ejes tematicos:"))
+        self.programa_ejes = QPlainTextEdit()
+        self.programa_ejes.setReadOnly(True)
+        self.programa_ejes.setMaximumHeight(110)
+        layout.addWidget(self.programa_ejes)
+
+        layout.addWidget(QLabel("Perspectiva / enfoque de la catedra:"))
+        self.programa_perspectiva = QPlainTextEdit()
+        self.programa_perspectiva.setReadOnly(True)
+        self.programa_perspectiva.setMaximumHeight(90)
+        layout.addWidget(self.programa_perspectiva)
+
+        fila_biblio = QHBoxLayout()
+        col_obligatoria = QVBoxLayout()
+        col_obligatoria.addWidget(QLabel("Bibliografia obligatoria:"))
+        self.programa_obligatoria = QPlainTextEdit()
+        self.programa_obligatoria.setReadOnly(True)
+        col_obligatoria.addWidget(self.programa_obligatoria)
+        col_opcional = QVBoxLayout()
+        col_opcional.addWidget(QLabel("Bibliografia opcional:"))
+        self.programa_opcional = QPlainTextEdit()
+        self.programa_opcional.setReadOnly(True)
+        col_opcional.addWidget(self.programa_opcional)
+        fila_biblio.addLayout(col_obligatoria)
+        fila_biblio.addLayout(col_opcional)
+        layout.addLayout(fila_biblio)
 
         return panel
 
@@ -395,7 +438,8 @@ class MainWindow(QMainWindow):
                 item_periodo.setData(0, ROL_ID, periodo["id"])
 
                 for materia in db.listar_materias(periodo["id"]):
-                    item_materia = QTreeWidgetItem([materia["nombre"]])
+                    marca_programa = "" if materia["programa_doc_id"] else " (sin programa)"
+                    item_materia = QTreeWidgetItem([f"{materia['nombre']}{marca_programa}"])
                     item_materia.setData(0, ROL_TIPO, "materia")
                     item_materia.setData(0, ROL_ID, materia["id"])
 
@@ -570,7 +614,10 @@ class MainWindow(QMainWindow):
             if dialogo.exec() == QDialog.Accepted:
                 titulo, tipo_doc, autor = dialogo.datos()
                 db.actualizar_documento(elemento_id, titulo, tipo_doc, autor)
+                if tipo_doc == "programa":
+                    db.marcar_como_programa(doc["materia_id"], elemento_id)
                 self._recargar_arbol()
+                self._cargar_programa()
 
     def _eliminar_seleccion(self):
         seleccion = self._seleccion_actual()
@@ -626,6 +673,7 @@ class MainWindow(QMainWindow):
             self.materia_actual_id = None
 
         self._cargar_cronograma()
+        self._cargar_programa()
 
     def _cargar_documento(self, doc_id):
         doc = db.obtener_documento(doc_id)
@@ -732,6 +780,68 @@ class MainWindow(QMainWindow):
             item.setData(Qt.UserRole, evento["materia_id"])
             self.proximos_lista.addItem(item)
 
+    # ---------- programa de la materia ----------
+
+    def _cargar_programa(self):
+        campos = (self.programa_ejes, self.programa_perspectiva, self.programa_obligatoria, self.programa_opcional)
+        if self.materia_actual_id is None:
+            self.programa_label.setText("Selecciona una materia para ver su programa.")
+            self.boton_analizar_programa.setEnabled(False)
+            for campo in campos:
+                campo.setPlainText("")
+            return
+
+        materia = db.obtener_materia(self.materia_actual_id)
+        if not materia["programa_doc_id"]:
+            self.programa_label.setText(
+                f"{materia['nombre']}: todavia no hay un documento marcado como 'programa'. "
+                "Importa o edita un documento y elegi el tipo 'programa'."
+            )
+            self.boton_analizar_programa.setEnabled(False)
+        else:
+            doc_programa = db.obtener_documento(materia["programa_doc_id"])
+            nombre_doc = doc_programa["titulo"] if doc_programa else "(documento eliminado)"
+            self.programa_label.setText(f"Programa de {materia['nombre']}: {nombre_doc}")
+            self.boton_analizar_programa.setEnabled(doc_programa is not None)
+
+        self.programa_ejes.setPlainText(materia["ejes_tematicos"] or "(sin analizar todavia)")
+        self.programa_perspectiva.setPlainText(materia["perspectiva"] or "(sin analizar todavia)")
+        self.programa_obligatoria.setPlainText(materia["bibliografia_obligatoria"] or "(sin analizar todavia)")
+        self.programa_opcional.setPlainText(materia["bibliografia_opcional"] or "(sin analizar todavia)")
+
+    def _analizar_programa(self):
+        materia = db.obtener_materia(self.materia_actual_id)
+        if not materia or not materia["programa_doc_id"]:
+            return
+        doc_programa = db.obtener_documento(materia["programa_doc_id"])
+        texto = (doc_programa["texto"] or "") if doc_programa else ""
+        if not texto.strip():
+            QMessageBox.information(self, "Sin texto", "El documento marcado como programa no tiene texto extraido.")
+            return
+
+        modelo = self.modelo_combo.currentText() or ai.MODELO_DEFAULT
+        self.boton_analizar_programa.setEnabled(False)
+        self.programa_label.setText("Analizando el programa con Claude, espera unos segundos...")
+
+        self.programa_worker = ProgramaWorker(texto, modelo)
+        self.programa_worker.resultado.connect(self._programa_analizado)
+        self.programa_worker.error.connect(self._programa_error)
+        self.programa_worker.start()
+
+    def _programa_analizado(self, datos):
+        db.guardar_analisis_programa(
+            self.materia_actual_id,
+            datos["ejes_tematicos"],
+            datos["perspectiva"],
+            datos["bibliografia_obligatoria"],
+            datos["bibliografia_opcional"],
+        )
+        self._cargar_programa()
+
+    def _programa_error(self, mensaje):
+        QMessageBox.warning(self, "Error al analizar el programa", mensaje)
+        self._cargar_programa()
+
     # ---------- panel IA ----------
 
     def _ejecutar_ia(self, accion):
@@ -751,6 +861,9 @@ class MainWindow(QMainWindow):
 
         modelo = self.modelo_combo.currentText() or ai.MODELO_DEFAULT
 
+        materia = db.obtener_materia(self.doc_actual["materia_id"])
+        contexto_catedra = materia["perspectiva"] if materia and materia["perspectiva"] else None
+
         for boton in self._botones_ia:
             boton.setEnabled(False)
         self.boton_exportar_md.setEnabled(False)
@@ -761,7 +874,7 @@ class MainWindow(QMainWindow):
         self.ia_pregunta_actual = pregunta
         self.ia_modelo_actual = modelo
 
-        self.ai_worker = AIWorker(accion, texto, modelo, pregunta)
+        self.ai_worker = AIWorker(accion, texto, modelo, pregunta, contexto_catedra=contexto_catedra)
         self.ai_worker.resultado.connect(self._ia_resultado_listo)
         self.ai_worker.error.connect(self._ia_error)
         self.ai_worker.start()

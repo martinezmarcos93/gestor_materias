@@ -40,6 +40,8 @@ class ImportWorker(QThread):
                 doc_id = db.agregar_documento(
                     self.materia_id, titulo, self.tipo, destino, texto, ocr_aplicado
                 )
+                if self.tipo == "programa":
+                    db.marcar_como_programa(self.materia_id, doc_id)
                 self.documento_importado.emit(doc_id, titulo)
             except Exception as exc:
                 self.error.emit(origen.name, str(exc))
@@ -51,26 +53,50 @@ class AIWorker(QThread):
     resultado = Signal(str)
     error = Signal(str)
 
-    def __init__(self, accion, texto, modelo, pregunta=None):
+    def __init__(self, accion, texto, modelo, pregunta=None, contexto_catedra=None):
         super().__init__()
         self.accion = accion
         self.texto = texto
         self.modelo = modelo
         self.pregunta = pregunta
+        self.contexto_catedra = contexto_catedra
 
     def run(self):
         try:
             if self.accion == "resumir":
-                resultado = ai.resumir(self.texto, self.modelo)
+                resultado = ai.resumir(self.texto, self.modelo, contexto_catedra=self.contexto_catedra)
             elif self.accion == "preguntas":
-                resultado = ai.preguntas_de_estudio(self.texto, self.modelo)
+                resultado = ai.preguntas_de_estudio(
+                    self.texto, self.modelo, contexto_catedra=self.contexto_catedra
+                )
             elif self.accion == "fuente":
-                resultado = ai.analizar_fuente(self.texto, self.modelo)
+                resultado = ai.analizar_fuente(
+                    self.texto, self.modelo, contexto_catedra=self.contexto_catedra
+                )
             elif self.accion == "consulta":
-                resultado = ai.consulta_libre(self.texto, self.pregunta, self.modelo)
+                resultado = ai.consulta_libre(
+                    self.texto, self.pregunta, self.modelo, contexto_catedra=self.contexto_catedra
+                )
             else:
                 raise ValueError(f"Accion desconocida: {self.accion}")
             self.resultado.emit(resultado)
+        except Exception as exc:
+            self.error.emit(str(exc))
+
+
+class ProgramaWorker(QThread):
+    resultado = Signal(dict)
+    error = Signal(str)
+
+    def __init__(self, texto, modelo):
+        super().__init__()
+        self.texto = texto
+        self.modelo = modelo
+
+    def run(self):
+        try:
+            datos = ai.analizar_programa(self.texto, self.modelo)
+            self.resultado.emit(datos)
         except Exception as exc:
             self.error.emit(str(exc))
 

@@ -7,7 +7,7 @@ DB_PATH = BASE_DIR / "data" / "biblioteca.db"
 ARCHIVOS_DIR = BASE_DIR / "data" / "documentos"
 
 TIPOS_PERIODO = ["cuatrimestre", "trimestre", "semestre", "anual", "bimestre"]
-TIPOS_DOCUMENTO = ["texto", "consigna", "parcial", "fuente primaria"]
+TIPOS_DOCUMENTO = ["programa", "texto", "consigna", "parcial", "fuente primaria"]
 TIPOS_EVENTO = ["parcial", "recuperatorio", "trabajo practico", "entrega", "clase", "otro"]
 
 SCHEMA = """
@@ -30,6 +30,11 @@ CREATE TABLE IF NOT EXISTS materias (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     periodo_id INTEGER NOT NULL REFERENCES periodos(id) ON DELETE CASCADE,
     nombre TEXT NOT NULL,
+    programa_doc_id INTEGER REFERENCES documentos(id) ON DELETE SET NULL,
+    ejes_tematicos TEXT,
+    perspectiva TEXT,
+    bibliografia_obligatoria TEXT,
+    bibliografia_opcional TEXT,
     UNIQUE(periodo_id, nombre)
 );
 
@@ -232,6 +237,25 @@ def eliminar_materia(materia_id):
     conn.commit()
     conn.close()
     shutil.rmtree(ARCHIVOS_DIR / str(materia_id), ignore_errors=True)
+
+
+def marcar_como_programa(materia_id, doc_id):
+    conn = get_conn()
+    conn.execute("UPDATE materias SET programa_doc_id=? WHERE id=?", (doc_id, materia_id))
+    conn.commit()
+    conn.close()
+
+
+def guardar_analisis_programa(materia_id, ejes_tematicos, perspectiva, bibliografia_obligatoria, bibliografia_opcional):
+    conn = get_conn()
+    conn.execute(
+        """UPDATE materias
+           SET ejes_tematicos=?, perspectiva=?, bibliografia_obligatoria=?, bibliografia_opcional=?
+           WHERE id=?""",
+        (ejes_tematicos, perspectiva, bibliografia_obligatoria, bibliografia_opcional, materia_id),
+    )
+    conn.commit()
+    conn.close()
 
 
 def ruta_materia(materia_id):

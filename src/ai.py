@@ -1,4 +1,5 @@
 import json
+import re
 import shutil
 import subprocess
 
@@ -95,37 +96,93 @@ def _ejecutar(prompt, modelo=MODELO_DEFAULT, system_prompt=SISTEMA, timeout=TIME
     return data.get("result", "").strip()
 
 
-def resumir(texto, modelo=MODELO_DEFAULT):
-    prompt = (
+def _con_contexto_catedra(prompt_base, contexto_catedra):
+    if not contexto_catedra:
+        return prompt_base
+    return (
+        "Contexto: la catedra de esta materia tiene la siguiente perspectiva/enfoque "
+        f"(segun su programa) - tenela en cuenta en tu analisis, ya que un mismo texto "
+        f"puede leerse distinto segun el enfoque de la catedra:\n{contexto_catedra}\n\n"
+        + prompt_base
+    )
+
+
+def resumir(texto, modelo=MODELO_DEFAULT, contexto_catedra=None):
+    prompt = _con_contexto_catedra(
         "Resumi el siguiente texto de bibliografia academica, identificando la tesis "
         "principal, los argumentos secundarios y las conclusiones, en no mas de 300 "
-        f"palabras.\n\nTEXTO:\n{texto[:LIMITE_CHARS]}"
+        f"palabras.\n\nTEXTO:\n{texto[:LIMITE_CHARS]}",
+        contexto_catedra,
     )
     return _ejecutar(prompt, modelo)
 
 
-def preguntas_de_estudio(texto, modelo=MODELO_DEFAULT):
-    prompt = (
+def preguntas_de_estudio(texto, modelo=MODELO_DEFAULT, contexto_catedra=None):
+    prompt = _con_contexto_catedra(
         "A partir del siguiente texto de bibliografia de una materia, genera 8 "
         "preguntas de estudio que podrian aparecer en un parcial, de dificultad "
-        f"variada. Numeralas.\n\nTEXTO:\n{texto[:LIMITE_CHARS]}"
+        f"variada. Numeralas.\n\nTEXTO:\n{texto[:LIMITE_CHARS]}",
+        contexto_catedra,
     )
     return _ejecutar(prompt, modelo)
 
 
-def analizar_fuente(texto, modelo=MODELO_DEFAULT):
-    prompt = (
+def analizar_fuente(texto, modelo=MODELO_DEFAULT, contexto_catedra=None):
+    prompt = _con_contexto_catedra(
         "Analiza el siguiente texto como fuente academica, indicando en secciones "
         "claras: 1) tipo de fuente (primaria o secundaria) y por que, 2) corriente o "
         "postura teorica si es identificable, 3) posibles sesgos o limitaciones, "
-        f"4) conceptos clave que introduce.\n\nTEXTO:\n{texto[:LIMITE_CHARS]}"
+        f"4) conceptos clave que introduce.\n\nTEXTO:\n{texto[:LIMITE_CHARS]}",
+        contexto_catedra,
     )
     return _ejecutar(prompt, modelo)
 
 
-def consulta_libre(texto, pregunta, modelo=MODELO_DEFAULT):
-    prompt = (
+def consulta_libre(texto, pregunta, modelo=MODELO_DEFAULT, contexto_catedra=None):
+    prompt = _con_contexto_catedra(
         f"Tenes el siguiente fragmento de bibliografia:\n\n{texto[:LIMITE_CHARS]}\n\n"
-        f"Respondes esta consulta del estudiante, basandote en el texto anterior: {pregunta}"
+        f"Respondes esta consulta del estudiante, basandote en el texto anterior: {pregunta}",
+        contexto_catedra,
     )
     return _ejecutar(prompt, modelo)
+
+
+def analizar_programa(texto, modelo=MODELO_DEFAULT):
+    """Extrae del programa/syllabus los ejes tematicos, la perspectiva de la
+    catedra, y la bibliografia obligatoria/opcional, como texto estructurado."""
+    prompt = (
+        "A partir del siguiente programa (syllabus) de una materia universitaria, "
+        "extrae la informacion pedida y respondes UNICAMENTE con un objeto JSON "
+        "valido, sin texto adicional antes o despues, sin bloques de codigo "
+        "markdown, con exactamente esta forma:\n"
+        '{"ejes_tematicos": "...", "perspectiva": "...", '
+        '"bibliografia_obligatoria": "...", "bibliografia_opcional": "..."}\n\n'
+        "Cada valor es un string (no una lista): para los ejes o la bibliografia, "
+        "separa cada item con un salto de linea dentro del mismo string, incluyendo "
+        "autor cuando este disponible. Para 'perspectiva', describe en un parrafo "
+        "breve el enfoque, corriente teorica o linea de la catedra si se puede "
+        "identificar en el programa. Si una seccion no esta presente, deja el "
+        "valor como string vacio.\n\n"
+        f"PROGRAMA:\n{texto[:LIMITE_CHARS]}"
+    )
+    salida = _ejecutar(prompt, modelo)
+    return _parsear_json_programa(salida)
+
+
+def _parsear_json_programa(salida):
+    texto = salida.strip()
+    if texto.startswith("```"):
+        texto = re.sub(r"^```(json)?", "", texto).rstrip("`").strip()
+    try:
+        datos = json.loads(texto)
+    except json.JSONDecodeError:
+        coincidencia = re.search(r"\{.*\}", texto, re.DOTALL)
+        if not coincidencia:
+            raise ClaudeCodeError(f"No se pudo interpretar la respuesta como JSON: {salida[:300]}")
+        datos = json.loads(coincidencia.group(0))
+    return {
+        "ejes_tematicos": datos.get("ejes_tematicos") or "",
+        "perspectiva": datos.get("perspectiva") or "",
+        "bibliografia_obligatoria": datos.get("bibliografia_obligatoria") or "",
+        "bibliografia_opcional": datos.get("bibliografia_opcional") or "",
+    }
