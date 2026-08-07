@@ -352,6 +352,13 @@ def actualizar_documento(doc_id, titulo, tipo, autor=None):
     conn.close()
 
 
+def actualizar_texto_documento(doc_id, texto):
+    conn = get_conn()
+    conn.execute("UPDATE documentos SET texto=? WHERE id=?", (texto, doc_id))
+    conn.commit()
+    conn.close()
+
+
 def actualizar_estado_lectura(doc_id, estado):
     conn = get_conn()
     conn.execute("UPDATE documentos SET estado_lectura=? WHERE id=?", (estado, doc_id))
@@ -407,17 +414,38 @@ def listar_eventos(materia_id):
     return rows
 
 
-def listar_eventos_proximos(limite=20):
-    """Cronograma global: proximos eventos de todas las materias, con contexto."""
+def listar_eventos_proximos(limite=20, dias=None):
+    """Cronograma global: proximos eventos de todas las materias, con contexto.
+    Si se pasa 'dias', limita a eventos dentro de esa cantidad de dias desde hoy."""
+    condicion_fecha = "date(e.fecha) >= date('now')"
+    params = []
+    if dias is not None:
+        condicion_fecha += " AND date(e.fecha) <= date('now', ?)"
+        params.append(f"+{int(dias)} days")
+    params.append(limite)
+
     conn = get_conn()
     rows = conn.execute(
-        """SELECT e.*, m.nombre AS materia, m.id AS materia_id
+        f"""SELECT e.*, m.nombre AS materia, m.id AS materia_id
            FROM eventos e
            JOIN materias m ON m.id = e.materia_id
-           WHERE date(e.fecha) >= date('now')
+           WHERE {condicion_fecha}
            ORDER BY e.fecha
            LIMIT ?""",
-        (limite,),
+        params,
+    ).fetchall()
+    conn.close()
+    return rows
+
+
+def listar_todos_los_eventos():
+    """Todos los eventos de todas las materias, con nombre de materia, sin filtrar por fecha."""
+    conn = get_conn()
+    rows = conn.execute(
+        """SELECT e.*, m.nombre AS materia
+           FROM eventos e
+           JOIN materias m ON m.id = e.materia_id
+           ORDER BY e.fecha"""
     ).fetchall()
     conn.close()
     return rows

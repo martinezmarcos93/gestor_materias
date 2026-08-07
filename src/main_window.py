@@ -1,4 +1,5 @@
 from datetime import date
+from pathlib import Path
 
 from PySide6.QtCore import QDate, Qt
 from PySide6.QtGui import QAction
@@ -35,8 +36,17 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import ai, ayuda, config, db, exportador
-from .workers import AIWorker, ConexionIAWorker, ImportWorker, ProgramaWorker
+from . import ai, ayuda, calendario, config, db, exportador
+from .workers import (
+    AIWorker,
+    ComparacionWorker,
+    ConexionIAWorker,
+    ConsultaCorpusWorker,
+    CorreccionOCRWorker,
+    ImportWorker,
+    LineaTiempoWorker,
+    ProgramaWorker,
+)
 
 ROL_TIPO = Qt.UserRole
 ROL_ID = Qt.UserRole + 1
@@ -217,6 +227,8 @@ class MainWindow(QMainWindow):
 
         if not db.listar_carreras():
             self._nueva_carrera()
+        else:
+            self._avisar_eventos_proximos()
 
     # ---------- construccion de UI ----------
 
@@ -230,6 +242,7 @@ class MainWindow(QMainWindow):
             ("Nueva materia", self._nueva_materia),
             ("Importar documentos...", self._importar_documentos),
             ("Nuevo evento", self._nuevo_evento),
+            ("Exportar cronograma (.ics)", self._exportar_cronograma_ics),
             (None, None),
             ("Editar", self._editar_seleccion),
             ("Eliminar", self._eliminar_seleccion),
@@ -268,6 +281,7 @@ class MainWindow(QMainWindow):
         panel_der.addTab(self._crear_panel_texto(), "Texto")
         panel_der.addTab(self._crear_panel_programa(), "Programa")
         panel_der.addTab(self._crear_panel_cronograma(), "Cronograma de la materia")
+        panel_der.addTab(self._crear_panel_timeline(), "Linea de tiempo")
         panel_der.addTab(self._crear_panel_ia(), "Analisis IA")
 
         splitter.addWidget(panel_der)
@@ -342,6 +356,10 @@ class MainWindow(QMainWindow):
         self.estado_lectura_combo.currentIndexChanged.connect(self._cambiar_estado_lectura)
         fila_estado.addWidget(self.estado_lectura_combo)
         fila_estado.addStretch()
+        self.boton_corregir_ocr = QPushButton("Corregir OCR con IA...")
+        self.boton_corregir_ocr.clicked.connect(self._corregir_ocr)
+        self.boton_corregir_ocr.setEnabled(False)
+        fila_estado.addWidget(self.boton_corregir_ocr)
         layout.addLayout(fila_estado)
 
         self.texto_view = QPlainTextEdit()
@@ -359,6 +377,105 @@ class MainWindow(QMainWindow):
         db.actualizar_estado_lectura(self.doc_actual["id"], estado)
         self.doc_actual = db.obtener_documento(self.doc_actual["id"])
         self._recargar_arbol()
+
+    def _corregir_ocr(self):
+        if self.doc_actual is None or not self.doc_actual["texto"]:
+            return
+        if not self._confirmar(
+            "Esto le pide a Claude que corrija errores de reconocimiento de OCR en "
+            "todo el documento (puede tardar si tiene muchas paginas). Vas a poder "
+            "revisar el resultado antes de guardarlo. ¿Continuar?"
+        ):
+            return
+
+        modelo = self.modelo_combo.currentText() or ai.MODELO_DEFAULT
+        self.boton_corregir_ocr.setEnabled(False)
+
+        self.progreso_ocr = QProgressDialog("Corrigiendo OCR con IA...", "Cancelar", 0, 1, self)
+        self.progreso_ocr.setWindowModality(Qt.WindowModal)
+        self.progreso_ocr.show()
+
+        self.correccion_worker = CorreccionOCRWorker(self.doc_actual["texto"], modelo)
+        self.correccion_worker.progreso.connect(self._progreso_correccion_ocr)
+        self.correccion_worker.resultado.connect(self._correccion_ocr_lista)
+        self.correccion_worker.error.connect(self._correccion_ocr_error)
+        self.correccion_worker.start()
+
+    def _progreso_correccion_ocr(self, actual, total):
+        self.progreso_ocr.setMaximum(total)
+        self.progreso_ocr.setValue(actual - 1)
+        self.progreso_ocr.setLabelText(f"Corrigiendo OCR con IA... (pagina {actual}/{total})")
+
+    def _correccion_ocr_lista(self, texto_corregido):
+        self.progreso_ocr.close()
+        self.boton_corregir_ocr.setEnabled(True)
+
+        dialogo = QDialog(self)
+        dialogo.setWindowTitle("Revisar correccion de OCR")
+        dialogo.resize(700, 600)
+        layout = QVBoxLayout(dialogo)
+        layout.addWidget(QLabel("Resultado corregido (revisa antes de guardar):"))
+        visor = QPlainTextEdit()
+        visor.setPlainText(texto_corregido)
+        visor.setReadOnly(True)
+        layout.addWidget(visor)
+        botones = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        botones.button(QDialogButtonBox.Save).setText("Guardar")
+        botones.button(QDialogButtonBox.Cancel).setText("Descartar")
+        botones.accepted.connect(dialogo.accept)
+        botones.rejected.connect(dialogo.reject)
+        layout.addWidget(botones)
+
+        if dialogo.exec() == QDialog.Accepted:
+            db.actualizar_texto_documento(self.doc_actual["id"], texto_corregido)
+            self._cargar_documento(self.doc_actual["id"])
+
+    def _correccion_ocr_error(self, mensaje):
+        self.progreso_ocr.close()
+        self.boton_corregir_ocr.setEnabled(True)
+        QMessageBox.warning(self, "Error al corregir OCR", mensaje)
+
+    def _crear_panel_timeline(self):
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+
+        self.boton_timeline = QPushButton("Extraer linea de tiempo con IA")
+        self.boton_timeline.clicked.connect(self._extraer_linea_tiempo)
+        layout.addWidget(self.boton_timeline)
+
+        self.timeline_lista = QListWidget()
+        layout.addWidget(self.timeline_lista)
+
+        return panel
+
+    def _extraer_linea_tiempo(self):
+        if self.doc_actual is None or not (self.doc_actual["texto"] or "").strip():
+            QMessageBox.information(self, "Elegi un documento", "Selecciona un documento con texto extraido.")
+            return
+
+        modelo = self.modelo_combo.currentText() or ai.MODELO_DEFAULT
+        self.boton_timeline.setEnabled(False)
+        self.timeline_lista.clear()
+        self.timeline_lista.addItem("Extrayendo fechas con Claude...")
+
+        self.timeline_worker = LineaTiempoWorker(self.doc_actual["texto"], modelo)
+        self.timeline_worker.resultado.connect(self._timeline_lista_lista)
+        self.timeline_worker.error.connect(self._timeline_error)
+        self.timeline_worker.start()
+
+    def _timeline_lista_lista(self, eventos):
+        self.boton_timeline.setEnabled(True)
+        self.timeline_lista.clear()
+        if not eventos:
+            self.timeline_lista.addItem("No se encontraron fechas especificas en este texto.")
+            return
+        for evento in eventos:
+            self.timeline_lista.addItem(f"{evento['fecha']} — {evento['descripcion']}")
+
+    def _timeline_error(self, mensaje):
+        self.boton_timeline.setEnabled(True)
+        self.timeline_lista.clear()
+        QMessageBox.warning(self, "Error al extraer linea de tiempo", mensaje)
 
     def _crear_panel_programa(self):
         panel = QWidget()
@@ -419,19 +536,25 @@ class MainWindow(QMainWindow):
         self.boton_preguntas.clicked.connect(lambda: self._ejecutar_ia("preguntas"))
         self.boton_fuente = QPushButton("Analizar como fuente")
         self.boton_fuente.clicked.connect(lambda: self._ejecutar_ia("fuente"))
+        self.boton_cita = QPushButton("Generar cita (APA/Chicago)")
+        self.boton_cita.clicked.connect(lambda: self._ejecutar_ia("cita"))
         fila_botones.addWidget(self.boton_resumir)
         fila_botones.addWidget(self.boton_preguntas)
         fila_botones.addWidget(self.boton_fuente)
+        fila_botones.addWidget(self.boton_cita)
         layout.addLayout(fila_botones)
 
         fila_consulta = QHBoxLayout()
         self.consulta_edit = QLineEdit()
         self.consulta_edit.setPlaceholderText("Preguntale algo puntual sobre este texto...")
         self.consulta_edit.returnPressed.connect(lambda: self._ejecutar_ia("consulta"))
-        self.boton_consultar = QPushButton("Preguntar")
+        self.boton_consultar = QPushButton("Preguntar (este documento)")
         self.boton_consultar.clicked.connect(lambda: self._ejecutar_ia("consulta"))
+        self.boton_consultar_materia = QPushButton("Preguntar a toda la materia")
+        self.boton_consultar_materia.clicked.connect(self._consultar_materia)
         fila_consulta.addWidget(self.consulta_edit)
         fila_consulta.addWidget(self.boton_consultar)
+        fila_consulta.addWidget(self.boton_consultar_materia)
         layout.addLayout(fila_consulta)
 
         self.ia_estado = QLabel("")
@@ -458,6 +581,8 @@ class MainWindow(QMainWindow):
             self.boton_preguntas,
             self.boton_fuente,
             self.boton_consultar,
+            self.boton_consultar_materia,
+            self.boton_cita,
         ]
 
         return panel
@@ -731,9 +856,11 @@ class MainWindow(QMainWindow):
         self.doc_actual = doc
         self.texto_view.setPlainText(doc["texto"] or "(sin texto extraido)")
         self.estado_lectura_combo.setCurrentIndex(db.ESTADOS_LECTURA.index(doc["estado_lectura"]))
+        self.boton_corregir_ocr.setEnabled(bool(doc["ocr_aplicado"]) and bool(doc["texto"]))
         self.ia_resultado.clear()
         self.boton_exportar_md.setEnabled(False)
         self.ia_accion_actual = None
+        self.timeline_lista.clear()
 
     # ---------- busqueda ----------
 
@@ -831,6 +958,38 @@ class MainWindow(QMainWindow):
             item = QListWidgetItem(texto)
             item.setData(Qt.UserRole, evento["materia_id"])
             self.proximos_lista.addItem(item)
+
+    def _exportar_cronograma_ics(self):
+        eventos = db.listar_todos_los_eventos()
+        if not eventos:
+            QMessageBox.information(self, "Sin eventos", "Todavia no cargaste ningun evento en el cronograma.")
+            return
+
+        ruta, _ = QFileDialog.getSaveFileName(
+            self, "Exportar cronograma", "cronograma.ics", "Calendario (*.ics)"
+        )
+        if not ruta:
+            return
+
+        contenido = calendario.generar_ics(eventos)
+        Path(ruta).write_text(contenido, encoding="utf-8")
+        QMessageBox.information(
+            self,
+            "Cronograma exportado",
+            f"Se exportaron {len(eventos)} eventos a:\n{ruta}\n\n"
+            "Import\u00e1 ese archivo en Google Calendar, Outlook o cualquier otro calendario.",
+        )
+
+    def _avisar_eventos_proximos(self):
+        eventos = db.listar_eventos_proximos(limite=10, dias=7)
+        if not eventos:
+            return
+        lineas = [f"- {e['fecha']} [{e['materia']}] {e['tipo']}: {e['titulo']}" for e in eventos]
+        QMessageBox.information(
+            self,
+            "Proximos eventos (7 dias)",
+            "Tenes estos eventos cargados para los proximos 7 dias:\n\n" + "\n".join(lineas),
+        )
 
     # ---------- programa de la materia ----------
 
@@ -940,10 +1099,47 @@ class MainWindow(QMainWindow):
         self.ia_pregunta_actual = pregunta
         self.ia_modelo_actual = modelo
 
-        self.ai_worker = AIWorker(accion, texto, modelo, pregunta, contexto_catedra=contexto_catedra)
+        self.ai_worker = AIWorker(
+            accion, texto, modelo, pregunta, contexto_catedra=contexto_catedra,
+            titulo=self.doc_actual["titulo"], autor=self.doc_actual["autor"],
+        )
         self.ai_worker.resultado.connect(self._ia_resultado_listo)
         self.ai_worker.error.connect(self._ia_error)
         self.ai_worker.start()
+
+    def _consultar_materia(self):
+        if self.materia_actual_id is None:
+            QMessageBox.information(
+                self, "Elegi una materia", "Selecciona una materia (o un documento de ella) primero."
+            )
+            return
+        pregunta = self.consulta_edit.text().strip()
+        if not pregunta:
+            return
+
+        documentos = [d for d in db.listar_documentos(self.materia_actual_id) if d["texto"]]
+        if not documentos:
+            QMessageBox.information(
+                self, "Sin textos", "Esta materia todavia no tiene documentos con texto extraido."
+            )
+            return
+
+        modelo = self.modelo_combo.currentText() or ai.MODELO_DEFAULT
+
+        for boton in self._botones_ia:
+            boton.setEnabled(False)
+        self.boton_exportar_md.setEnabled(False)
+        self.ia_estado.setText(f"Consultando a Claude sobre toda la materia ({modelo}, {len(documentos)} textos)...")
+        self.ia_resultado.clear()
+
+        self.ia_accion_actual = "consulta"
+        self.ia_pregunta_actual = pregunta
+        self.ia_modelo_actual = modelo
+
+        self.corpus_worker = ConsultaCorpusWorker(pregunta, documentos, modelo)
+        self.corpus_worker.resultado.connect(self._ia_resultado_listo)
+        self.corpus_worker.error.connect(self._ia_error)
+        self.corpus_worker.start()
 
     def _ia_resultado_listo(self, resultado):
         self.ia_resultado.setPlainText(resultado)

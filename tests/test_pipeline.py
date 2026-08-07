@@ -54,7 +54,8 @@ def main():
     generar_pdf_escaneado(ruta_pdf)
 
     print("2) Corriendo pipeline de OCR...")
-    texto, ocr_aplicado = ocr.extraer_texto_pdf(ruta_pdf)
+    texto, ocr_aplicado, metadata = ocr.extraer_texto_pdf(ruta_pdf)
+    print(f"   Metadata detectada: {metadata}")
     print(f"   OCR aplicado: {ocr_aplicado}")
     print(f"   Texto extraido:\n   {texto!r}\n")
     assert ocr_aplicado, "Deberia haber usado OCR (la imagen no tiene capa de texto)"
