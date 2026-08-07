@@ -1,3 +1,4 @@
+import shutil
 import sqlite3
 from pathlib import Path
 
@@ -125,10 +126,17 @@ def actualizar_carrera(carrera_id, nombre, tipo_periodo):
 
 
 def eliminar_carrera(carrera_id):
+    materia_ids = [
+        m["id"]
+        for periodo in listar_periodos(carrera_id)
+        for m in listar_materias(periodo["id"])
+    ]
     conn = get_conn()
     conn.execute("DELETE FROM carreras WHERE id=?", (carrera_id,))
     conn.commit()
     conn.close()
+    for materia_id in materia_ids:
+        shutil.rmtree(ARCHIVOS_DIR / str(materia_id), ignore_errors=True)
 
 
 # ---------- periodos ----------
@@ -173,10 +181,13 @@ def actualizar_periodo(periodo_id, nombre, anio, orden=0):
 
 
 def eliminar_periodo(periodo_id):
+    materia_ids = [m["id"] for m in listar_materias(periodo_id)]
     conn = get_conn()
     conn.execute("DELETE FROM periodos WHERE id=?", (periodo_id,))
     conn.commit()
     conn.close()
+    for materia_id in materia_ids:
+        shutil.rmtree(ARCHIVOS_DIR / str(materia_id), ignore_errors=True)
 
 
 # ---------- materias ----------
@@ -220,6 +231,7 @@ def eliminar_materia(materia_id):
     conn.execute("DELETE FROM materias WHERE id=?", (materia_id,))
     conn.commit()
     conn.close()
+    shutil.rmtree(ARCHIVOS_DIR / str(materia_id), ignore_errors=True)
 
 
 def ruta_materia(materia_id):
@@ -271,10 +283,13 @@ def actualizar_documento(doc_id, titulo, tipo, autor=None):
 
 
 def eliminar_documento(doc_id):
+    doc = obtener_documento(doc_id)
     conn = get_conn()
     conn.execute("DELETE FROM documentos WHERE id=?", (doc_id,))
     conn.commit()
     conn.close()
+    if doc:
+        Path(doc["ruta_archivo"]).unlink(missing_ok=True)
 
 
 # ---------- eventos (cronograma) ----------
