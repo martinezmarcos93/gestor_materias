@@ -1,0 +1,22 @@
+# Entorno Python
+venv/
+__pycache__/
+*.pyc
+
+# Datos personales del usuario: bibliografia, base de datos, escaneos.
+# Nunca se sube: es material de catedra/uso personal, no del repo.
+data/
+
+# Modelos de idioma de Tesseract (se descargan con scripts/descargar_tessdata.py)
+tessdata/*.traineddata
+
+# Artefactos de test
+tests/test_scan.pdf
+
+# Config local de Claude Code / editor
+.claude/
+.vscode/
+
+# SO
+Thumbs.db
+.DS_Store
