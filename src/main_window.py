@@ -34,7 +34,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import ai, db
+from . import ai, config, db, exportador
 from .workers import AIWorker, ConexionIAWorker, ImportWorker
 
 ROL_TIPO = Qt.UserRole
@@ -187,6 +187,9 @@ class MainWindow(QMainWindow):
         self.import_worker = None
         self.ai_worker = None
         self.conexion_worker = None
+        self.ia_accion_actual = None
+        self.ia_pregunta_actual = None
+        self.ia_modelo_actual = None
 
         self._crear_toolbar()
         self._crear_layout_central()
@@ -351,6 +354,18 @@ class MainWindow(QMainWindow):
         self.ia_resultado.setReadOnly(True)
         layout.addWidget(self.ia_resultado)
 
+        fila_exportar = QHBoxLayout()
+        self.carpeta_exportacion_label = QLabel(self._texto_carpeta_exportacion())
+        self.boton_elegir_carpeta = QPushButton("Elegir carpeta (vault Obsidian)...")
+        self.boton_elegir_carpeta.clicked.connect(self._elegir_carpeta_exportacion)
+        self.boton_exportar_md = QPushButton("Exportar a Markdown")
+        self.boton_exportar_md.clicked.connect(self._exportar_markdown)
+        self.boton_exportar_md.setEnabled(False)
+        fila_exportar.addWidget(self.carpeta_exportacion_label, stretch=1)
+        fila_exportar.addWidget(self.boton_elegir_carpeta)
+        fila_exportar.addWidget(self.boton_exportar_md)
+        layout.addLayout(fila_exportar)
+
         self._botones_ia = [
             self.boton_resumir,
             self.boton_preguntas,
@@ -359,6 +374,10 @@ class MainWindow(QMainWindow):
         ]
 
         return panel
+
+    def _texto_carpeta_exportacion(self):
+        carpeta = config.obtener_carpeta_exportacion()
+        return f"Carpeta de exportacion: {carpeta}" if carpeta else "Carpeta de exportacion: (no configurada)"
 
     # ---------- arbol: construccion y navegacion ----------
 
@@ -613,6 +632,8 @@ class MainWindow(QMainWindow):
         self.doc_actual = doc
         self.texto_view.setPlainText(doc["texto"] or "(sin texto extraido)")
         self.ia_resultado.clear()
+        self.boton_exportar_md.setEnabled(False)
+        self.ia_accion_actual = None
 
     # ---------- busqueda ----------
 
@@ -732,8 +753,13 @@ class MainWindow(QMainWindow):
 
         for boton in self._botones_ia:
             boton.setEnabled(False)
+        self.boton_exportar_md.setEnabled(False)
         self.ia_estado.setText(f"Consultando a Claude ({modelo})...")
         self.ia_resultado.clear()
+
+        self.ia_accion_actual = accion
+        self.ia_pregunta_actual = pregunta
+        self.ia_modelo_actual = modelo
 
         self.ai_worker = AIWorker(accion, texto, modelo, pregunta)
         self.ai_worker.resultado.connect(self._ia_resultado_listo)
@@ -745,12 +771,54 @@ class MainWindow(QMainWindow):
         self.ia_estado.setText("Listo.")
         for boton in self._botones_ia:
             boton.setEnabled(True)
+        self.boton_exportar_md.setEnabled(True)
 
     def _ia_error(self, mensaje):
         self.ia_estado.setText("Error al consultar a Claude.")
         QMessageBox.warning(self, "Error de IA", mensaje)
         for boton in self._botones_ia:
             boton.setEnabled(True)
+
+    def _elegir_carpeta_exportacion(self):
+        carpeta_actual = config.obtener_carpeta_exportacion() or ""
+        carpeta = QFileDialog.getExistingDirectory(self, "Elegir carpeta de exportacion (vault de Obsidian)", carpeta_actual)
+        if carpeta:
+            config.guardar_carpeta_exportacion(carpeta)
+            self.carpeta_exportacion_label.setText(self._texto_carpeta_exportacion())
+
+    def _exportar_markdown(self):
+        if self.doc_actual is None or not self.ia_resultado.toPlainText().strip():
+            QMessageBox.information(self, "Nada para exportar", "Primero genera un analisis con la IA.")
+            return
+
+        carpeta = config.obtener_carpeta_exportacion()
+        if not carpeta:
+            self._elegir_carpeta_exportacion()
+            carpeta = config.obtener_carpeta_exportacion()
+            if not carpeta:
+                return
+
+        materia = db.obtener_materia(self.doc_actual["materia_id"])
+        periodo = db.obtener_periodo(materia["periodo_id"])
+        carrera = db.obtener_carrera(periodo["carrera_id"])
+
+        try:
+            ruta_final = exportador.exportar_markdown(
+                carpeta,
+                carrera,
+                periodo,
+                materia,
+                self.doc_actual,
+                self.ia_accion_actual,
+                self.ia_resultado.toPlainText(),
+                self.ia_modelo_actual,
+                pregunta=self.ia_pregunta_actual,
+            )
+        except OSError as exc:
+            QMessageBox.warning(self, "Error al exportar", str(exc))
+            return
+
+        QMessageBox.information(self, "Exportado", f"Nota guardada en:\n{ruta_final}")
 
     def _verificar_conexion_ia(self):
         self.ia_estado.setText("Verificando conexion con Claude Code...")

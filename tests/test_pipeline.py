@@ -8,9 +8,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
+import shutil
+
 from PIL import Image, ImageDraw, ImageFont
 
-from src import ai, db, ocr
+from src import ai, db, exportador, ocr
 
 TEXTO_PRUEBA = (
     "La Revolucion de Mayo de 1810 marco el inicio del proceso independentista "
@@ -74,17 +76,33 @@ def main():
     assert len(eventos) == 1, "El evento del cronograma deberia haberse guardado"
 
     print("4) Probando IA (Claude Code, cuenta Pro)...")
+    resumen = None
     if not ai.esta_instalado():
         print("   Claude Code no esta instalado en esta maquina: se omite el paso de IA.")
     else:
         resumen = ai.resumir(texto, modelo="haiku")
         print(f"   Resumen generado:\n   {resumen}\n")
 
-    print("5) Limpiando datos de prueba...")
+    print("5) Probando exportacion a Markdown (Obsidian)...")
+    carpeta_vault = Path(__file__).resolve().parent / "vault_test"
+    doc = db.obtener_documento(doc_id)
+    periodo = db.obtener_periodo(periodo_id)
+    carrera = db.obtener_carrera(carrera_id)
+    ruta_md = exportador.exportar_markdown(
+        carpeta_vault, carrera, periodo, db.obtener_materia(materia_id), doc,
+        "resumir", resumen or texto, "haiku",
+    )
+    assert ruta_md.exists(), "La nota exportada deberia existir en disco"
+    contenido_md = ruta_md.read_text(encoding="utf-8")
+    assert "materia:" in contenido_md and "[[Historia Argentina I - TEST]]" in contenido_md
+    print(f"   Nota exportada en: {ruta_md}")
+
+    print("6) Limpiando datos de prueba...")
     db.eliminar_carrera(carrera_id)
     ruta_pdf.unlink(missing_ok=True)
+    shutil.rmtree(carpeta_vault, ignore_errors=True)
 
-    print("\nTODO OK: el pipeline de OCR + DB + cronograma + IA funciona de punta a punta.")
+    print("\nTODO OK: el pipeline de OCR + DB + cronograma + IA + exportacion funciona de punta a punta.")
 
 
 if __name__ == "__main__":
