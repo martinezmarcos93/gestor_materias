@@ -20,8 +20,13 @@ periodos), no asume ninguna estructura particular.
   se usa automaticamente como contexto en cualquier analisis de IA sobre los
   textos de esa materia (un mismo texto puede leerse distinto segun el
   enfoque de la catedra que lo asigna).
+- **Cruce de bibliografia**: la bibliografia obligatoria/opcional extraida
+  del programa se compara contra los documentos ya importados, marcando con
+  ✓ lo que ya esta subido y con ✗ lo que falta.
 - Importar PDFs por materia, con OCR automatico (Tesseract) cuando el PDF
   no tiene capa de texto (escaneos de mala calidad).
+- **Estado de lectura** por documento (pendiente / en proceso / leido), con
+  contador de progreso por materia visible en el arbol (ej. "[2/5 leidos]").
 - Cronograma por materia: parciales, recuperatorios, trabajos practicos,
   entregas, con vista global de "Proximos eventos" de todas las materias.
 - Busqueda de texto completo sobre toda la bibliografia cargada.
@@ -32,6 +37,8 @@ periodos), no asume ninguna estructura particular.
   requiere una API key aparte ni tiene costo adicional sobre el plan Pro/Max.
 - Exportar cualquier analisis de IA como nota Markdown con front-matter,
   a una carpeta configurable (por ejemplo, una vault de Obsidian).
+- **Ayuda / FAQ integrada** en la app (barra de herramientas), con guia de
+  uso completa y preguntas frecuentes.
 
 ## Requisitos
 
@@ -74,6 +81,8 @@ venv\Scripts\python.exe main.py
    programa ya fue analizado, el enfoque de la catedra se aplica solo.
 6. Usar "Verificar conexion IA" en la barra de herramientas para confirmar
    que Claude Code esta instalado y logueado correctamente.
+7. Ante cualquier duda, el boton **"Ayuda / FAQ"** de la barra de
+   herramientas tiene una guia completa dentro de la propia app.
 
 ## Estructura del proyecto
 
@@ -88,6 +97,7 @@ src/
   workers.py          tareas en segundo plano (importacion, IA, programa, conexion)
   exportador.py       exporta analisis de IA a notas Markdown (Obsidian)
   config.py           preferencias locales (carpeta de exportacion)
+  ayuda.py            texto de la guia de uso / FAQ integrada
   main_window.py      interfaz (PySide6)
 scripts/
   descargar_tessdata.py   descarga los modelos de idioma de Tesseract
@@ -101,8 +111,6 @@ sube al repositorio: es material de catedra de uso personal.
 
 ## Pendiente / proximos pasos
 
-- Cruzar la bibliografia obligatoria/opcional extraida del programa contra
-  los documentos ya importados (que falta subir, que ya esta).
 - Extraccion automatica de autor/metadata desde el PDF.
 - Linea de tiempo generada a partir de fechas mencionadas en el texto.
 - Correccion post-OCR asistida por IA para mejorar el reconocimiento.

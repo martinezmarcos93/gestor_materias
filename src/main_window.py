@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
+    QTextBrowser,
     QTextEdit,
     QToolBar,
     QTreeWidget,
@@ -34,7 +35,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import ai, config, db, exportador
+from . import ai, ayuda, config, db, exportador
 from .workers import AIWorker, ConexionIAWorker, ImportWorker, ProgramaWorker
 
 ROL_TIPO = Qt.UserRole
@@ -174,6 +175,23 @@ class EventoDialog(QDialog):
         )
 
 
+class AyudaDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Ayuda / FAQ - Gestor de Materias")
+        self.resize(700, 650)
+
+        layout = QVBoxLayout(self)
+        visor = QTextBrowser()
+        visor.setOpenExternalLinks(True)
+        visor.setMarkdown(ayuda.TEXTO_AYUDA)
+        layout.addWidget(visor)
+
+        botones = QDialogButtonBox(QDialogButtonBox.Ok)
+        botones.accepted.connect(self.accept)
+        layout.addWidget(botones)
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -217,6 +235,8 @@ class MainWindow(QMainWindow):
             ("Eliminar", self._eliminar_seleccion),
             (None, None),
             ("Verificar conexion IA", self._verificar_conexion_ia),
+            (None, None),
+            ("Ayuda / FAQ", self._mostrar_ayuda),
         ]
         for texto, callback in acciones:
             if texto is None:
@@ -245,10 +265,7 @@ class MainWindow(QMainWindow):
         # --- panel derecho: texto + cronograma + analisis IA ---
         panel_der = QTabWidget()
 
-        self.texto_view = QPlainTextEdit()
-        self.texto_view.setReadOnly(True)
-        panel_der.addTab(self.texto_view, "Texto")
-
+        panel_der.addTab(self._crear_panel_texto(), "Texto")
         panel_der.addTab(self._crear_panel_programa(), "Programa")
         panel_der.addTab(self._crear_panel_cronograma(), "Cronograma de la materia")
         panel_der.addTab(self._crear_panel_ia(), "Analisis IA")
@@ -314,6 +331,35 @@ class MainWindow(QMainWindow):
 
         return panel
 
+    def _crear_panel_texto(self):
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+
+        fila_estado = QHBoxLayout()
+        fila_estado.addWidget(QLabel("Estado de lectura:"))
+        self.estado_lectura_combo = QComboBox()
+        self.estado_lectura_combo.addItems([db.ESTADOS_LECTURA_LABEL[e] for e in db.ESTADOS_LECTURA])
+        self.estado_lectura_combo.currentIndexChanged.connect(self._cambiar_estado_lectura)
+        fila_estado.addWidget(self.estado_lectura_combo)
+        fila_estado.addStretch()
+        layout.addLayout(fila_estado)
+
+        self.texto_view = QPlainTextEdit()
+        self.texto_view.setReadOnly(True)
+        layout.addWidget(self.texto_view)
+
+        return panel
+
+    def _cambiar_estado_lectura(self, indice):
+        if self.doc_actual is None or indice < 0:
+            return
+        estado = db.ESTADOS_LECTURA[indice]
+        if estado == self.doc_actual["estado_lectura"]:
+            return
+        db.actualizar_estado_lectura(self.doc_actual["id"], estado)
+        self.doc_actual = db.obtener_documento(self.doc_actual["id"])
+        self._recargar_arbol()
+
     def _crear_panel_programa(self):
         panel = QWidget()
         layout = QVBoxLayout(panel)
@@ -340,14 +386,12 @@ class MainWindow(QMainWindow):
 
         fila_biblio = QHBoxLayout()
         col_obligatoria = QVBoxLayout()
-        col_obligatoria.addWidget(QLabel("Bibliografia obligatoria:"))
-        self.programa_obligatoria = QPlainTextEdit()
-        self.programa_obligatoria.setReadOnly(True)
+        col_obligatoria.addWidget(QLabel("Bibliografia obligatoria (✓ = ya importada):"))
+        self.programa_obligatoria = QListWidget()
         col_obligatoria.addWidget(self.programa_obligatoria)
         col_opcional = QVBoxLayout()
-        col_opcional.addWidget(QLabel("Bibliografia opcional:"))
-        self.programa_opcional = QPlainTextEdit()
-        self.programa_opcional.setReadOnly(True)
+        col_opcional.addWidget(QLabel("Bibliografia opcional (✓ = ya importada):"))
+        self.programa_opcional = QListWidget()
         col_opcional.addWidget(self.programa_opcional)
         fila_biblio.addLayout(col_obligatoria)
         fila_biblio.addLayout(col_opcional)
@@ -439,13 +483,20 @@ class MainWindow(QMainWindow):
 
                 for materia in db.listar_materias(periodo["id"]):
                     marca_programa = "" if materia["programa_doc_id"] else " (sin programa)"
-                    item_materia = QTreeWidgetItem([f"{materia['nombre']}{marca_programa}"])
+                    leidos, total = db.contar_progreso_lectura(materia["id"])
+                    marca_progreso = f" [{leidos}/{total} leidos]" if total else ""
+                    item_materia = QTreeWidgetItem([f"{materia['nombre']}{marca_programa}{marca_progreso}"])
                     item_materia.setData(0, ROL_TIPO, "materia")
                     item_materia.setData(0, ROL_ID, materia["id"])
 
                     for doc in db.listar_documentos(materia["id"]):
                         marca_ocr = " [OCR]" if doc["ocr_aplicado"] else ""
-                        item_doc = QTreeWidgetItem([f"[{doc['tipo']}] {doc['titulo']}{marca_ocr}"])
+                        marca_estado = (
+                            " ✓" if doc["estado_lectura"] == "leido"
+                            else " (en proceso)" if doc["estado_lectura"] == "en_proceso"
+                            else ""
+                        )
+                        item_doc = QTreeWidgetItem([f"[{doc['tipo']}] {doc['titulo']}{marca_ocr}{marca_estado}"])
                         item_doc.setData(0, ROL_TIPO, "documento")
                         item_doc.setData(0, ROL_ID, doc["id"])
                         item_materia.addChild(item_doc)
@@ -679,6 +730,7 @@ class MainWindow(QMainWindow):
         doc = db.obtener_documento(doc_id)
         self.doc_actual = doc
         self.texto_view.setPlainText(doc["texto"] or "(sin texto extraido)")
+        self.estado_lectura_combo.setCurrentIndex(db.ESTADOS_LECTURA.index(doc["estado_lectura"]))
         self.ia_resultado.clear()
         self.boton_exportar_md.setEnabled(False)
         self.ia_accion_actual = None
@@ -783,12 +835,13 @@ class MainWindow(QMainWindow):
     # ---------- programa de la materia ----------
 
     def _cargar_programa(self):
-        campos = (self.programa_ejes, self.programa_perspectiva, self.programa_obligatoria, self.programa_opcional)
         if self.materia_actual_id is None:
             self.programa_label.setText("Selecciona una materia para ver su programa.")
             self.boton_analizar_programa.setEnabled(False)
-            for campo in campos:
-                campo.setPlainText("")
+            self.programa_ejes.setPlainText("")
+            self.programa_perspectiva.setPlainText("")
+            self.programa_obligatoria.clear()
+            self.programa_opcional.clear()
             return
 
         materia = db.obtener_materia(self.materia_actual_id)
@@ -806,8 +859,21 @@ class MainWindow(QMainWindow):
 
         self.programa_ejes.setPlainText(materia["ejes_tematicos"] or "(sin analizar todavia)")
         self.programa_perspectiva.setPlainText(materia["perspectiva"] or "(sin analizar todavia)")
-        self.programa_obligatoria.setPlainText(materia["bibliografia_obligatoria"] or "(sin analizar todavia)")
-        self.programa_opcional.setPlainText(materia["bibliografia_opcional"] or "(sin analizar todavia)")
+
+        cruce = db.verificar_bibliografia(self.materia_actual_id)
+        self._poblar_lista_bibliografia(self.programa_obligatoria, cruce["obligatoria"])
+        self._poblar_lista_bibliografia(self.programa_opcional, cruce["opcional"])
+
+    def _poblar_lista_bibliografia(self, lista_widget, items):
+        lista_widget.clear()
+        if not items:
+            lista_widget.addItem("(sin analizar todavia)")
+            return
+        for item in items:
+            marca = "✓ " if item["encontrada"] else "✗ (falta subir) "
+            elemento = QListWidgetItem(marca + item["texto"])
+            elemento.setForeground(Qt.darkGreen if item["encontrada"] else Qt.darkRed)
+            lista_widget.addItem(elemento)
 
     def _analizar_programa(self):
         materia = db.obtener_materia(self.materia_actual_id)
@@ -945,3 +1011,6 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Conexion OK", mensaje)
         else:
             QMessageBox.warning(self, "Conexion fallida", mensaje)
+
+    def _mostrar_ayuda(self):
+        AyudaDialog(self).exec()

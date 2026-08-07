@@ -1,3 +1,4 @@
+import re
 import shutil
 import sqlite3
 from pathlib import Path
@@ -9,6 +10,8 @@ ARCHIVOS_DIR = BASE_DIR / "data" / "documentos"
 TIPOS_PERIODO = ["cuatrimestre", "trimestre", "semestre", "anual", "bimestre"]
 TIPOS_DOCUMENTO = ["programa", "texto", "consigna", "parcial", "fuente primaria"]
 TIPOS_EVENTO = ["parcial", "recuperatorio", "trabajo practico", "entrega", "clase", "otro"]
+ESTADOS_LECTURA = ["pendiente", "en_proceso", "leido"]
+ESTADOS_LECTURA_LABEL = {"pendiente": "Pendiente", "en_proceso": "En proceso", "leido": "Leido"}
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS carreras (
@@ -47,6 +50,7 @@ CREATE TABLE IF NOT EXISTS documentos (
     ruta_archivo TEXT NOT NULL,
     texto TEXT,
     ocr_aplicado INTEGER DEFAULT 0,
+    estado_lectura TEXT NOT NULL DEFAULT 'pendiente',
     fecha_agregado TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -258,6 +262,48 @@ def guardar_analisis_programa(materia_id, ejes_tematicos, perspectiva, bibliogra
     conn.close()
 
 
+def _palabras_significativas(texto):
+    return {p for p in re.findall(r"[a-záéíóúñ0-9]+", texto.lower()) if len(p) >= 4}
+
+
+def _item_coincide(linea, documentos):
+    """Heuristico por superposicion de palabras (no substring exacto), ya que
+    el titulo cargado a mano y la cita del programa rara vez coinciden
+    textualmente pero comparten autor/palabras clave del titulo."""
+    palabras_linea = _palabras_significativas(linea)
+    if not palabras_linea:
+        return False
+    for doc in documentos:
+        candidato = f"{doc['titulo'] or ''} {doc['autor'] or ''}"
+        palabras_doc = _palabras_significativas(candidato)
+        if not palabras_doc:
+            continue
+        interseccion = palabras_linea & palabras_doc
+        if len(interseccion) >= 2 or (len(palabras_doc) <= 2 and interseccion):
+            return True
+    return False
+
+
+def verificar_bibliografia(materia_id):
+    """Cruza la bibliografia obligatoria/opcional extraida del programa
+    contra los documentos ya importados en la materia (match por titulo/autor,
+    heuristico). Devuelve {"obligatoria": [...], "opcional": [...]}, cada
+    item con {"texto": linea, "encontrada": bool}."""
+    materia = obtener_materia(materia_id)
+    documentos = listar_documentos(materia_id)
+    resultado = {}
+    for campo, clave in (("bibliografia_obligatoria", "obligatoria"), ("bibliografia_opcional", "opcional")):
+        lineas = [
+            linea.strip("-•* \t")
+            for linea in (materia[campo] or "").splitlines()
+            if linea.strip()
+        ]
+        resultado[clave] = [
+            {"texto": linea, "encontrada": _item_coincide(linea, documentos)} for linea in lineas
+        ]
+    return resultado
+
+
 def ruta_materia(materia_id):
     """Ruta donde se guardan los PDFs de una materia, por id (agnostico al nombre)."""
     ruta = ARCHIVOS_DIR / str(materia_id)
@@ -304,6 +350,28 @@ def actualizar_documento(doc_id, titulo, tipo, autor=None):
     )
     conn.commit()
     conn.close()
+
+
+def actualizar_estado_lectura(doc_id, estado):
+    conn = get_conn()
+    conn.execute("UPDATE documentos SET estado_lectura=? WHERE id=?", (estado, doc_id))
+    conn.commit()
+    conn.close()
+
+
+def contar_progreso_lectura(materia_id):
+    """Devuelve (leidos, total) documentos de tipo no-programa para una materia."""
+    conn = get_conn()
+    fila = conn.execute(
+        """SELECT
+               SUM(CASE WHEN estado_lectura = 'leido' THEN 1 ELSE 0 END) AS leidos,
+               COUNT(*) AS total
+           FROM documentos
+           WHERE materia_id=? AND tipo != 'programa'""",
+        (materia_id,),
+    ).fetchone()
+    conn.close()
+    return (fila["leidos"] or 0, fila["total"] or 0)
 
 
 def eliminar_documento(doc_id):

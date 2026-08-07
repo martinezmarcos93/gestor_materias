@@ -58,8 +58,11 @@ fuente/consultas sobre cualquier texto de esa materia. Probado con el
 ejemplo de la catedra "progre" — el analisis efectivamente cambio de
 lectura al tener el contexto cargado.
 
-**Pendiente de esto:** cruzar la bibliografia obligatoria/opcional extraida
-contra los documentos ya importados, para mostrar que falta subir.
+**Actualizacion:** el cruce de bibliografia tambien esta implementado (marca
+✓/✗ en la pestana Programa segun si el texto ya fue importado). Se sumo
+ademas estado de lectura por documento (pendiente/en proceso/leido) con
+contador de progreso por materia, y una guia de Ayuda/FAQ dentro de la app,
+en base al feedback externo recibido sobre el README.
 
 ## 2. El framing del producto: "asesor academico"
 
