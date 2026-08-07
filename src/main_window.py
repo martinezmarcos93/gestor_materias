@@ -1,14 +1,16 @@
 from datetime import date
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QDate, Qt
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QComboBox,
+    QDateEdit,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
     QFormLayout,
     QHBoxLayout,
+    QHeaderView,
     QInputDialog,
     QLabel,
     QLineEdit,
@@ -21,6 +23,8 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSpinBox,
     QSplitter,
+    QTableWidget,
+    QTableWidgetItem,
     QTabWidget,
     QTextEdit,
     QToolBar,
@@ -31,31 +35,130 @@ from PySide6.QtWidgets import (
 )
 
 from . import ai, db
-from .workers import AIWorker, ImportWorker
+from .workers import AIWorker, ConexionIAWorker, ImportWorker
 
-ROL_MATERIA = Qt.UserRole
-ROL_DOCUMENTO = Qt.UserRole + 1
-CUATRIMESTRES = {"1er cuatrimestre": 1, "2do cuatrimestre": 2, "Anual": 0}
-CUATRIMESTRES_INV = {v: k for k, v in CUATRIMESTRES.items()}
-TIPOS_DOCUMENTO = ["texto", "consigna", "parcial", "fuente primaria"]
+ROL_TIPO = Qt.UserRole
+ROL_ID = Qt.UserRole + 1
 
 
-class NuevaMateriaDialog(QDialog):
-    def __init__(self, parent=None):
+def sugerir_nombre_periodo(tipo_periodo, existentes_en_anio):
+    n = existentes_en_anio
+    ordinales = {0: "1er", 1: "2do", 2: "3er", 3: "4to"}
+    ordinal = ordinales.get(n, f"{n + 1}to")
+    if tipo_periodo == "anual":
+        return "Ciclo anual" if n == 0 else f"Ciclo anual {n + 1}"
+    return f"{ordinal} {tipo_periodo.capitalize()}"
+
+
+class CarreraDialog(QDialog):
+    def __init__(self, parent=None, nombre="", tipo_periodo="cuatrimestre"):
         super().__init__(parent)
-        self.setWindowTitle("Nueva materia")
+        self.setWindowTitle("Carrera")
         layout = QFormLayout(self)
 
-        self.nombre_edit = QLineEdit()
+        self.nombre_edit = QLineEdit(nombre)
+        self.tipo_combo = QComboBox()
+        self.tipo_combo.addItems(db.TIPOS_PERIODO)
+        self.tipo_combo.setCurrentText(tipo_periodo)
+
+        layout.addRow("Nombre de la carrera:", self.nombre_edit)
+        layout.addRow("Se divide en:", self.tipo_combo)
+
+        botones = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        botones.accepted.connect(self.accept)
+        botones.rejected.connect(self.reject)
+        layout.addRow(botones)
+
+    def datos(self):
+        return self.nombre_edit.text().strip(), self.tipo_combo.currentText()
+
+
+class PeriodoDialog(QDialog):
+    def __init__(self, parent=None, tipo_periodo="cuatrimestre", nombre="", anio=None, existentes_en_anio=0):
+        super().__init__(parent)
+        self.setWindowTitle("Periodo")
+        layout = QFormLayout(self)
+
+        anio = anio or date.today().year
+        self.nombre_edit = QLineEdit(nombre or sugerir_nombre_periodo(tipo_periodo, existentes_en_anio))
         self.anio_spin = QSpinBox()
         self.anio_spin.setRange(2000, 2100)
-        self.anio_spin.setValue(date.today().year)
-        self.cuatrimestre_combo = QComboBox()
-        self.cuatrimestre_combo.addItems(list(CUATRIMESTRES.keys()))
+        self.anio_spin.setValue(anio)
 
-        layout.addRow("Nombre:", self.nombre_edit)
+        layout.addRow("Nombre del periodo:", self.nombre_edit)
         layout.addRow("Anio:", self.anio_spin)
-        layout.addRow("Periodo:", self.cuatrimestre_combo)
+
+        botones = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        botones.accepted.connect(self.accept)
+        botones.rejected.connect(self.reject)
+        layout.addRow(botones)
+
+    def datos(self):
+        return self.nombre_edit.text().strip(), self.anio_spin.value()
+
+
+class MateriaDialog(QDialog):
+    def __init__(self, parent=None, nombre=""):
+        super().__init__(parent)
+        self.setWindowTitle("Materia")
+        layout = QFormLayout(self)
+
+        self.nombre_edit = QLineEdit(nombre)
+        layout.addRow("Nombre de la materia:", self.nombre_edit)
+
+        botones = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        botones.accepted.connect(self.accept)
+        botones.rejected.connect(self.reject)
+        layout.addRow(botones)
+
+    def datos(self):
+        return self.nombre_edit.text().strip()
+
+
+class DocumentoDialog(QDialog):
+    def __init__(self, parent=None, titulo="", tipo="texto", autor=""):
+        super().__init__(parent)
+        self.setWindowTitle("Documento")
+        layout = QFormLayout(self)
+
+        self.titulo_edit = QLineEdit(titulo)
+        self.tipo_combo = QComboBox()
+        self.tipo_combo.addItems(db.TIPOS_DOCUMENTO)
+        self.tipo_combo.setCurrentText(tipo)
+        self.autor_edit = QLineEdit(autor or "")
+
+        layout.addRow("Titulo:", self.titulo_edit)
+        layout.addRow("Tipo:", self.tipo_combo)
+        layout.addRow("Autor:", self.autor_edit)
+
+        botones = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        botones.accepted.connect(self.accept)
+        botones.rejected.connect(self.reject)
+        layout.addRow(botones)
+
+    def datos(self):
+        return self.titulo_edit.text().strip(), self.tipo_combo.currentText(), self.autor_edit.text().strip()
+
+
+class EventoDialog(QDialog):
+    def __init__(self, parent=None, titulo="", fecha=None, tipo="parcial", descripcion=""):
+        super().__init__(parent)
+        self.setWindowTitle("Evento del cronograma")
+        layout = QFormLayout(self)
+
+        self.titulo_edit = QLineEdit(titulo)
+        self.fecha_edit = QDateEdit()
+        self.fecha_edit.setCalendarPopup(True)
+        self.fecha_edit.setDate(fecha or QDate.currentDate())
+        self.tipo_combo = QComboBox()
+        self.tipo_combo.addItems(db.TIPOS_EVENTO)
+        self.tipo_combo.setCurrentText(tipo)
+        self.descripcion_edit = QLineEdit(descripcion or "")
+
+        layout.addRow("Titulo:", self.titulo_edit)
+        layout.addRow("Fecha:", self.fecha_edit)
+        layout.addRow("Tipo:", self.tipo_combo)
+        layout.addRow("Descripcion:", self.descripcion_edit)
 
         botones = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         botones.accepted.connect(self.accept)
@@ -64,27 +167,34 @@ class NuevaMateriaDialog(QDialog):
 
     def datos(self):
         return (
-            self.nombre_edit.text().strip(),
-            self.anio_spin.value(),
-            CUATRIMESTRES[self.cuatrimestre_combo.currentText()],
+            self.titulo_edit.text().strip(),
+            self.fecha_edit.date().toString("yyyy-MM-dd"),
+            self.tipo_combo.currentText(),
+            self.descripcion_edit.text().strip(),
         )
 
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Archivo Historiografico - Herramienta de estudio")
-        self.resize(1200, 750)
+        self.setWindowTitle("Gestor de Materias - Herramienta de estudio")
+        self.resize(1300, 780)
 
         db.init_db()
 
         self.doc_actual = None
+        self.materia_actual_id = None
         self.import_worker = None
         self.ai_worker = None
+        self.conexion_worker = None
 
         self._crear_toolbar()
         self._crear_layout_central()
         self._recargar_arbol()
+        self._recargar_proximos_eventos()
+
+        if not db.listar_carreras():
+            self._nueva_carrera()
 
     # ---------- construccion de UI ----------
 
@@ -92,77 +202,122 @@ class MainWindow(QMainWindow):
         toolbar = QToolBar("Principal")
         self.addToolBar(toolbar)
 
-        accion_materia = QAction("Nueva materia", self)
-        accion_materia.triggered.connect(self._nueva_materia)
-        toolbar.addAction(accion_materia)
-
-        accion_importar = QAction("Importar PDFs...", self)
-        accion_importar.triggered.connect(self._importar_pdfs)
-        toolbar.addAction(accion_importar)
-
-        accion_renombrar = QAction("Renombrar documento", self)
-        accion_renombrar.triggered.connect(self._renombrar_documento)
-        toolbar.addAction(accion_renombrar)
-
-        accion_eliminar = QAction("Eliminar", self)
-        accion_eliminar.triggered.connect(self._eliminar_seleccion)
-        toolbar.addAction(accion_eliminar)
+        acciones = [
+            ("Nueva carrera", self._nueva_carrera),
+            ("Nuevo periodo", self._nuevo_periodo),
+            ("Nueva materia", self._nueva_materia),
+            ("Importar documentos...", self._importar_documentos),
+            ("Nuevo evento", self._nuevo_evento),
+            (None, None),
+            ("Editar", self._editar_seleccion),
+            ("Eliminar", self._eliminar_seleccion),
+            (None, None),
+            ("Verificar conexion IA", self._verificar_conexion_ia),
+        ]
+        for texto, callback in acciones:
+            if texto is None:
+                toolbar.addSeparator()
+                continue
+            accion = QAction(texto, self)
+            accion.triggered.connect(callback)
+            toolbar.addAction(accion)
 
     def _crear_layout_central(self):
         splitter = QSplitter(Qt.Horizontal)
 
-        # --- panel izquierdo: materias + busqueda ---
+        # --- panel izquierdo: arbol + busqueda + proximos eventos ---
         panel_izq = QTabWidget()
 
         self.arbol = QTreeWidget()
-        self.arbol.setHeaderLabels(["Materias y documentos"])
+        self.arbol.setHeaderLabels(["Carrera / Periodo / Materia / Documento"])
         self.arbol.itemSelectionChanged.connect(self._seleccion_cambiada)
         panel_izq.addTab(self.arbol, "Materias")
 
-        panel_busqueda = QWidget()
-        layout_busqueda = QVBoxLayout(panel_busqueda)
-        fila_busqueda = QHBoxLayout()
-        self.busqueda_edit = QLineEdit()
-        self.busqueda_edit.setPlaceholderText("Buscar en toda la bibliografia...")
-        self.busqueda_edit.returnPressed.connect(self._buscar)
-        boton_buscar = QPushButton("Buscar")
-        boton_buscar.clicked.connect(self._buscar)
-        fila_busqueda.addWidget(self.busqueda_edit)
-        fila_busqueda.addWidget(boton_buscar)
-        layout_busqueda.addLayout(fila_busqueda)
-
-        self.resultados_lista = QListWidget()
-        self.resultados_lista.itemDoubleClicked.connect(self._abrir_resultado_busqueda)
-        layout_busqueda.addWidget(self.resultados_lista)
-        panel_izq.addTab(panel_busqueda, "Busqueda")
+        panel_izq.addTab(self._crear_panel_busqueda(), "Busqueda")
+        panel_izq.addTab(self._crear_panel_proximos(), "Proximos eventos")
 
         splitter.addWidget(panel_izq)
 
-        # --- panel derecho: texto + analisis IA ---
+        # --- panel derecho: texto + cronograma + analisis IA ---
         panel_der = QTabWidget()
 
         self.texto_view = QPlainTextEdit()
         self.texto_view.setReadOnly(True)
         panel_der.addTab(self.texto_view, "Texto")
 
+        panel_der.addTab(self._crear_panel_cronograma(), "Cronograma de la materia")
         panel_der.addTab(self._crear_panel_ia(), "Analisis IA")
 
         splitter.addWidget(panel_der)
-        splitter.setSizes([350, 850])
+        splitter.setSizes([380, 920])
 
         self.setCentralWidget(splitter)
+
+    def _crear_panel_busqueda(self):
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        fila = QHBoxLayout()
+        self.busqueda_edit = QLineEdit()
+        self.busqueda_edit.setPlaceholderText("Buscar en toda la bibliografia...")
+        self.busqueda_edit.returnPressed.connect(self._buscar)
+        boton_buscar = QPushButton("Buscar")
+        boton_buscar.clicked.connect(self._buscar)
+        fila.addWidget(self.busqueda_edit)
+        fila.addWidget(boton_buscar)
+        layout.addLayout(fila)
+
+        self.resultados_lista = QListWidget()
+        self.resultados_lista.itemDoubleClicked.connect(self._abrir_resultado_busqueda)
+        layout.addWidget(self.resultados_lista)
+        return panel
+
+    def _crear_panel_proximos(self):
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        boton_refrescar = QPushButton("Actualizar")
+        boton_refrescar.clicked.connect(self._recargar_proximos_eventos)
+        layout.addWidget(boton_refrescar)
+        self.proximos_lista = QListWidget()
+        layout.addWidget(self.proximos_lista)
+        return panel
+
+    def _crear_panel_cronograma(self):
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+
+        self.cronograma_label = QLabel("Selecciona una materia para ver su cronograma.")
+        layout.addWidget(self.cronograma_label)
+
+        self.cronograma_tabla = QTableWidget(0, 4)
+        self.cronograma_tabla.setHorizontalHeaderLabels(["Fecha", "Tipo", "Titulo", "Descripcion"])
+        self.cronograma_tabla.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
+        self.cronograma_tabla.setSelectionBehavior(QTableWidget.SelectRows)
+        self.cronograma_tabla.setEditTriggers(QTableWidget.NoEditTriggers)
+        layout.addWidget(self.cronograma_tabla)
+
+        fila_botones = QHBoxLayout()
+        boton_agregar = QPushButton("Agregar evento")
+        boton_agregar.clicked.connect(self._nuevo_evento)
+        boton_editar = QPushButton("Editar evento")
+        boton_editar.clicked.connect(self._editar_evento_seleccionado)
+        boton_eliminar = QPushButton("Eliminar evento")
+        boton_eliminar.clicked.connect(self._eliminar_evento_seleccionado)
+        fila_botones.addWidget(boton_agregar)
+        fila_botones.addWidget(boton_editar)
+        fila_botones.addWidget(boton_eliminar)
+        layout.addLayout(fila_botones)
+
+        return panel
 
     def _crear_panel_ia(self):
         panel = QWidget()
         layout = QVBoxLayout(panel)
 
         fila_modelo = QHBoxLayout()
-        fila_modelo.addWidget(QLabel("Modelo local (Ollama):"))
+        fila_modelo.addWidget(QLabel("Modelo (Claude Code, cuenta Pro):"))
         self.modelo_combo = QComboBox()
-        modelos = ai.modelos_disponibles()
-        self.modelo_combo.addItems(modelos)
-        if ai.MODELO_DEFAULT in modelos:
-            self.modelo_combo.setCurrentText(ai.MODELO_DEFAULT)
+        self.modelo_combo.addItems(ai.MODELOS)
+        self.modelo_combo.setCurrentText(ai.MODELO_DEFAULT)
         fila_modelo.addWidget(self.modelo_combo)
         fila_modelo.addStretch()
         layout.addLayout(fila_modelo)
@@ -205,70 +360,140 @@ class MainWindow(QMainWindow):
 
         return panel
 
-    # ---------- materias y documentos ----------
+    # ---------- arbol: construccion y navegacion ----------
 
     def _recargar_arbol(self):
+        item_previo = self._seleccion_actual()
         self.arbol.clear()
-        for materia in db.listar_materias():
-            periodo = CUATRIMESTRES_INV.get(materia["cuatrimestre"], "")
-            item_materia = QTreeWidgetItem([f"{materia['nombre']} ({materia['anio']} - {periodo})"])
-            item_materia.setData(0, ROL_MATERIA, materia["id"])
-            for doc in db.listar_documentos(materia["id"]):
-                marca_ocr = " [OCR]" if doc["ocr_aplicado"] else ""
-                item_doc = QTreeWidgetItem([f"[{doc['tipo']}] {doc['titulo']}{marca_ocr}"])
-                item_doc.setData(0, ROL_DOCUMENTO, doc["id"])
-                item_materia.addChild(item_doc)
-            self.arbol.addTopLevelItem(item_materia)
+        for carrera in db.listar_carreras():
+            item_carrera = QTreeWidgetItem([f"{carrera['nombre']} ({carrera['tipo_periodo']})"])
+            item_carrera.setData(0, ROL_TIPO, "carrera")
+            item_carrera.setData(0, ROL_ID, carrera["id"])
+
+            for periodo in db.listar_periodos(carrera["id"]):
+                item_periodo = QTreeWidgetItem([f"{periodo['nombre']} {periodo['anio']}"])
+                item_periodo.setData(0, ROL_TIPO, "periodo")
+                item_periodo.setData(0, ROL_ID, periodo["id"])
+
+                for materia in db.listar_materias(periodo["id"]):
+                    item_materia = QTreeWidgetItem([materia["nombre"]])
+                    item_materia.setData(0, ROL_TIPO, "materia")
+                    item_materia.setData(0, ROL_ID, materia["id"])
+
+                    for doc in db.listar_documentos(materia["id"]):
+                        marca_ocr = " [OCR]" if doc["ocr_aplicado"] else ""
+                        item_doc = QTreeWidgetItem([f"[{doc['tipo']}] {doc['titulo']}{marca_ocr}"])
+                        item_doc.setData(0, ROL_TIPO, "documento")
+                        item_doc.setData(0, ROL_ID, doc["id"])
+                        item_materia.addChild(item_doc)
+
+                    item_periodo.addChild(item_materia)
+
+                item_carrera.addChild(item_periodo)
+
+            self.arbol.addTopLevelItem(item_carrera)
         self.arbol.expandAll()
 
-    def _nueva_materia(self):
-        dialogo = NuevaMateriaDialog(self)
-        if dialogo.exec() == QDialog.Accepted:
-            nombre, anio, cuatrimestre = dialogo.datos()
-            if not nombre:
-                QMessageBox.warning(self, "Falta el nombre", "Ingresa el nombre de la materia.")
-                return
-            db.crear_materia(nombre, anio, cuatrimestre)
-            self._recargar_arbol()
+        if item_previo:
+            self._reseleccionar(*item_previo)
 
-    def _materia_seleccionada_id(self):
+    def _seleccion_actual(self):
         item = self.arbol.currentItem()
         if item is None:
             return None
-        materia_id = item.data(0, ROL_MATERIA)
-        if materia_id is not None:
-            return materia_id
-        if item.parent() is not None:
-            return item.parent().data(0, ROL_MATERIA)
+        return item.data(0, ROL_TIPO), item.data(0, ROL_ID)
+
+    def _reseleccionar(self, tipo, id_buscado):
+        pila = [self.arbol.topLevelItem(i) for i in range(self.arbol.topLevelItemCount())]
+        while pila:
+            item = pila.pop()
+            if item.data(0, ROL_TIPO) == tipo and item.data(0, ROL_ID) == id_buscado:
+                self.arbol.setCurrentItem(item)
+                return
+            pila.extend(item.child(i) for i in range(item.childCount()))
+
+    def _ancestro_id(self, tipo_buscado):
+        """Busca hacia arriba desde la seleccion actual el id del ancestro (o si mismo) del tipo pedido."""
+        item = self.arbol.currentItem()
+        while item is not None:
+            if item.data(0, ROL_TIPO) == tipo_buscado:
+                return item.data(0, ROL_ID)
+            item = item.parent()
         return None
 
-    def _importar_pdfs(self):
-        materia_id = self._materia_seleccionada_id()
+    # ---------- CRUD: carreras ----------
+
+    def _nueva_carrera(self):
+        dialogo = CarreraDialog(self)
+        if dialogo.exec() == QDialog.Accepted:
+            nombre, tipo_periodo = dialogo.datos()
+            if not nombre:
+                QMessageBox.warning(self, "Falta el nombre", "Ingresa el nombre de la carrera.")
+                return
+            db.crear_carrera(nombre, tipo_periodo)
+            self._recargar_arbol()
+
+    # ---------- CRUD: periodos ----------
+
+    def _nuevo_periodo(self):
+        carrera_id = self._ancestro_id("carrera")
+        if carrera_id is None:
+            QMessageBox.information(self, "Elegi una carrera", "Selecciona una carrera antes de agregar un periodo.")
+            return
+        carrera = db.obtener_carrera(carrera_id)
+        anio = date.today().year
+        existentes = [p for p in db.listar_periodos(carrera_id) if p["anio"] == anio]
+        dialogo = PeriodoDialog(
+            self, tipo_periodo=carrera["tipo_periodo"], anio=anio, existentes_en_anio=len(existentes)
+        )
+        if dialogo.exec() == QDialog.Accepted:
+            nombre, anio = dialogo.datos()
+            if not nombre:
+                QMessageBox.warning(self, "Falta el nombre", "Ingresa el nombre del periodo.")
+                return
+            orden = len([p for p in db.listar_periodos(carrera_id) if p["anio"] == anio])
+            db.crear_periodo(carrera_id, nombre, anio, orden)
+            self._recargar_arbol()
+
+    # ---------- CRUD: materias ----------
+
+    def _nueva_materia(self):
+        periodo_id = self._ancestro_id("periodo")
+        if periodo_id is None:
+            QMessageBox.information(self, "Elegi un periodo", "Selecciona un periodo antes de agregar una materia.")
+            return
+        dialogo = MateriaDialog(self)
+        if dialogo.exec() == QDialog.Accepted:
+            nombre = dialogo.datos()
+            if not nombre:
+                QMessageBox.warning(self, "Falta el nombre", "Ingresa el nombre de la materia.")
+                return
+            db.crear_materia(periodo_id, nombre)
+            self._recargar_arbol()
+
+    # ---------- documentos: importar ----------
+
+    def _importar_documentos(self):
+        materia_id = self._ancestro_id("materia")
         if materia_id is None:
-            QMessageBox.information(
-                self, "Elegi una materia", "Selecciona (o crea) una materia antes de importar."
-            )
+            QMessageBox.information(self, "Elegi una materia", "Selecciona una materia antes de importar.")
             return
 
-        rutas, _ = QFileDialog.getOpenFileNames(
-            self, "Seleccionar PDFs", "", "Archivos PDF (*.pdf)"
-        )
+        rutas, _ = QFileDialog.getOpenFileNames(self, "Seleccionar PDFs", "", "Archivos PDF (*.pdf)")
         if not rutas:
             return
 
         tipo, ok = QInputDialog.getItem(
-            self, "Tipo de documento", "Estos archivos son:", TIPOS_DOCUMENTO, 0, False
+            self, "Tipo de documento", "Estos archivos son:", db.TIPOS_DOCUMENTO, 0, False
         )
         if not ok:
             return
-
-        conn_row = next(m for m in db.listar_materias() if m["id"] == materia_id)
 
         self.progreso = QProgressDialog("Importando...", "Cancelar", 0, len(rutas), self)
         self.progreso.setWindowModality(Qt.WindowModal)
         self.progreso.show()
 
-        self.import_worker = ImportWorker(materia_id, conn_row["nombre"], rutas, tipo)
+        self.import_worker = ImportWorker(materia_id, rutas, tipo)
         self.import_worker.progreso.connect(self._progreso_importacion)
         self.import_worker.documento_importado.connect(lambda *_: self._recargar_arbol())
         self.import_worker.error.connect(self._error_importacion)
@@ -287,31 +512,73 @@ class MainWindow(QMainWindow):
         self.progreso.setValue(self.progreso.maximum())
         self._recargar_arbol()
 
-    def _renombrar_documento(self):
-        item = self.arbol.currentItem()
-        if item is None or item.data(0, ROL_DOCUMENTO) is None:
-            QMessageBox.information(self, "Elegi un documento", "Selecciona un documento en el arbol.")
+    # ---------- editar / eliminar generico ----------
+
+    def _editar_seleccion(self):
+        seleccion = self._seleccion_actual()
+        if seleccion is None:
+            QMessageBox.information(self, "Elegi un elemento", "Selecciona algo en el arbol para editar.")
             return
-        doc_id = item.data(0, ROL_DOCUMENTO)
-        doc = db.obtener_documento(doc_id)
-        nuevo_titulo, ok = QInputDialog.getText(self, "Renombrar", "Nuevo titulo:", text=doc["titulo"])
-        if ok and nuevo_titulo.strip():
-            db.renombrar_documento(doc_id, nuevo_titulo.strip())
-            self._recargar_arbol()
+        tipo, elemento_id = seleccion
+
+        if tipo == "carrera":
+            carrera = db.obtener_carrera(elemento_id)
+            dialogo = CarreraDialog(self, carrera["nombre"], carrera["tipo_periodo"])
+            if dialogo.exec() == QDialog.Accepted:
+                nombre, tipo_periodo = dialogo.datos()
+                db.actualizar_carrera(elemento_id, nombre, tipo_periodo)
+                self._recargar_arbol()
+
+        elif tipo == "periodo":
+            periodo = db.obtener_periodo(elemento_id)
+            dialogo = PeriodoDialog(self, nombre=periodo["nombre"], anio=periodo["anio"])
+            if dialogo.exec() == QDialog.Accepted:
+                nombre, anio = dialogo.datos()
+                db.actualizar_periodo(elemento_id, nombre, anio, periodo["orden"])
+                self._recargar_arbol()
+
+        elif tipo == "materia":
+            materia = db.obtener_materia(elemento_id)
+            dialogo = MateriaDialog(self, materia["nombre"])
+            if dialogo.exec() == QDialog.Accepted:
+                nombre = dialogo.datos()
+                db.actualizar_materia(elemento_id, nombre)
+                self._recargar_arbol()
+
+        elif tipo == "documento":
+            doc = db.obtener_documento(elemento_id)
+            dialogo = DocumentoDialog(self, doc["titulo"], doc["tipo"], doc["autor"])
+            if dialogo.exec() == QDialog.Accepted:
+                titulo, tipo_doc, autor = dialogo.datos()
+                db.actualizar_documento(elemento_id, titulo, tipo_doc, autor)
+                self._recargar_arbol()
 
     def _eliminar_seleccion(self):
-        item = self.arbol.currentItem()
-        if item is None:
+        seleccion = self._seleccion_actual()
+        if seleccion is None:
             return
-        doc_id = item.data(0, ROL_DOCUMENTO)
-        materia_id = item.data(0, ROL_MATERIA)
-        if doc_id is not None:
-            if self._confirmar("Eliminar este documento del archivo?"):
-                db.eliminar_documento(doc_id)
-        elif materia_id is not None:
-            if self._confirmar("Eliminar esta materia y todos sus documentos?"):
-                db.eliminar_materia(materia_id)
+        tipo, elemento_id = seleccion
+
+        mensajes = {
+            "carrera": "Eliminar esta carrera, todos sus periodos, materias y documentos?",
+            "periodo": "Eliminar este periodo, sus materias y documentos?",
+            "materia": "Eliminar esta materia y todos sus documentos y eventos?",
+            "documento": "Eliminar este documento del archivo?",
+        }
+        if not self._confirmar(mensajes.get(tipo, "Eliminar el elemento seleccionado?")):
+            return
+
+        if tipo == "carrera":
+            db.eliminar_carrera(elemento_id)
+        elif tipo == "periodo":
+            db.eliminar_periodo(elemento_id)
+        elif tipo == "materia":
+            db.eliminar_materia(elemento_id)
+        elif tipo == "documento":
+            db.eliminar_documento(elemento_id)
+
         self._recargar_arbol()
+        self._recargar_proximos_eventos()
 
     def _confirmar(self, mensaje):
         return (
@@ -319,16 +586,27 @@ class MainWindow(QMainWindow):
             == QMessageBox.Yes
         )
 
+    # ---------- seleccion y carga de contenido ----------
+
     def _seleccion_cambiada(self):
-        item = self.arbol.currentItem()
-        if item is None:
+        seleccion = self._seleccion_actual()
+        if seleccion is None:
             return
-        doc_id = item.data(0, ROL_DOCUMENTO)
-        if doc_id is None:
-            self.texto_view.setPlainText("")
+        tipo, elemento_id = seleccion
+
+        if tipo == "documento":
+            self._cargar_documento(elemento_id)
+            self.materia_actual_id = self._ancestro_id("materia")
+        elif tipo == "materia":
             self.doc_actual = None
-            return
-        self._cargar_documento(doc_id)
+            self.texto_view.setPlainText("")
+            self.materia_actual_id = elemento_id
+        else:
+            self.doc_actual = None
+            self.texto_view.setPlainText("")
+            self.materia_actual_id = None
+
+        self._cargar_cronograma()
 
     def _cargar_documento(self, doc_id):
         doc = db.obtener_documento(doc_id)
@@ -357,6 +635,81 @@ class MainWindow(QMainWindow):
     def _abrir_resultado_busqueda(self, item):
         doc_id = item.data(Qt.UserRole)
         self._cargar_documento(doc_id)
+        self._reseleccionar("documento", doc_id)
+
+    # ---------- cronograma ----------
+
+    def _cargar_cronograma(self):
+        self.cronograma_tabla.setRowCount(0)
+        if self.materia_actual_id is None:
+            self.cronograma_label.setText("Selecciona una materia para ver su cronograma.")
+            return
+
+        materia = db.obtener_materia(self.materia_actual_id)
+        eventos = db.listar_eventos(self.materia_actual_id)
+        self.cronograma_label.setText(f"Cronograma de: {materia['nombre']} ({len(eventos)} eventos)")
+
+        self.cronograma_tabla.setRowCount(len(eventos))
+        for fila, evento in enumerate(eventos):
+            self.cronograma_tabla.setItem(fila, 0, QTableWidgetItem(evento["fecha"] or ""))
+            self.cronograma_tabla.setItem(fila, 1, QTableWidgetItem(evento["tipo"]))
+            self.cronograma_tabla.setItem(fila, 2, QTableWidgetItem(evento["titulo"]))
+            self.cronograma_tabla.setItem(fila, 3, QTableWidgetItem(evento["descripcion"] or ""))
+            self.cronograma_tabla.item(fila, 0).setData(Qt.UserRole, evento["id"])
+
+    def _evento_seleccionado_id(self):
+        fila = self.cronograma_tabla.currentRow()
+        if fila < 0:
+            return None
+        item = self.cronograma_tabla.item(fila, 0)
+        return item.data(Qt.UserRole) if item else None
+
+    def _nuevo_evento(self):
+        materia_id = self._ancestro_id("materia") or self.materia_actual_id
+        if materia_id is None:
+            QMessageBox.information(self, "Elegi una materia", "Selecciona una materia antes de agregar un evento.")
+            return
+        dialogo = EventoDialog(self)
+        if dialogo.exec() == QDialog.Accepted:
+            titulo, fecha, tipo, descripcion = dialogo.datos()
+            if not titulo:
+                QMessageBox.warning(self, "Falta el titulo", "Ingresa el titulo del evento.")
+                return
+            db.crear_evento(materia_id, titulo, fecha, tipo, descripcion)
+            self.materia_actual_id = materia_id
+            self._cargar_cronograma()
+            self._recargar_proximos_eventos()
+
+    def _editar_evento_seleccionado(self):
+        evento_id = self._evento_seleccionado_id()
+        if evento_id is None:
+            QMessageBox.information(self, "Elegi un evento", "Selecciona un evento en la tabla.")
+            return
+        evento = db.obtener_evento(evento_id)
+        fecha_qt = QDate.fromString(evento["fecha"], "yyyy-MM-dd") if evento["fecha"] else QDate.currentDate()
+        dialogo = EventoDialog(self, evento["titulo"], fecha_qt, evento["tipo"], evento["descripcion"])
+        if dialogo.exec() == QDialog.Accepted:
+            titulo, fecha, tipo, descripcion = dialogo.datos()
+            db.actualizar_evento(evento_id, titulo, fecha, tipo, descripcion)
+            self._cargar_cronograma()
+            self._recargar_proximos_eventos()
+
+    def _eliminar_evento_seleccionado(self):
+        evento_id = self._evento_seleccionado_id()
+        if evento_id is None:
+            return
+        if self._confirmar("Eliminar este evento del cronograma?"):
+            db.eliminar_evento(evento_id)
+            self._cargar_cronograma()
+            self._recargar_proximos_eventos()
+
+    def _recargar_proximos_eventos(self):
+        self.proximos_lista.clear()
+        for evento in db.listar_eventos_proximos():
+            texto = f"{evento['fecha']} - [{evento['materia']}] {evento['tipo']}: {evento['titulo']}"
+            item = QListWidgetItem(texto)
+            item.setData(Qt.UserRole, evento["materia_id"])
+            self.proximos_lista.addItem(item)
 
     # ---------- panel IA ----------
 
@@ -379,7 +732,7 @@ class MainWindow(QMainWindow):
 
         for boton in self._botones_ia:
             boton.setEnabled(False)
-        self.ia_estado.setText(f"Consultando modelo local ({modelo})...")
+        self.ia_estado.setText(f"Consultando a Claude ({modelo})...")
         self.ia_resultado.clear()
 
         self.ai_worker = AIWorker(accion, texto, modelo, pregunta)
@@ -394,12 +747,20 @@ class MainWindow(QMainWindow):
             boton.setEnabled(True)
 
     def _ia_error(self, mensaje):
-        self.ia_estado.setText("Error al consultar el modelo.")
-        QMessageBox.warning(
-            self,
-            "Error de IA local",
-            f"No se pudo completar la consulta a Ollama:\n{mensaje}\n\n"
-            "Verifica que Ollama este corriendo (ollama serve) y que el modelo este descargado.",
-        )
+        self.ia_estado.setText("Error al consultar a Claude.")
+        QMessageBox.warning(self, "Error de IA", mensaje)
         for boton in self._botones_ia:
             boton.setEnabled(True)
+
+    def _verificar_conexion_ia(self):
+        self.ia_estado.setText("Verificando conexion con Claude Code...")
+        self.conexion_worker = ConexionIAWorker()
+        self.conexion_worker.resultado.connect(self._conexion_ia_resultado)
+        self.conexion_worker.start()
+
+    def _conexion_ia_resultado(self, ok, mensaje):
+        self.ia_estado.setText("")
+        if ok:
+            QMessageBox.information(self, "Conexion OK", mensaje)
+        else:
+            QMessageBox.warning(self, "Conexion fallida", mensaje)

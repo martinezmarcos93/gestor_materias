@@ -57,27 +57,33 @@ def main():
     assert ocr_aplicado, "Deberia haber usado OCR (la imagen no tiene capa de texto)"
     assert "Revolucion" in texto or "Revoluci" in texto, "El OCR no reconocio el texto esperado"
 
-    print("3) Probando base de datos (materia + documento + busqueda FTS)...")
+    print("3) Probando base de datos (carrera > periodo > materia > documento + busqueda FTS)...")
     db.init_db()
-    materia_id = db.crear_materia("Historia Argentina I - TEST", 2026, 2)
+    carrera_id = db.crear_carrera("Carrera de prueba", "cuatrimestre")
+    periodo_id = db.crear_periodo(carrera_id, "1er Cuatrimestre", 2026, 0)
+    materia_id = db.crear_materia(periodo_id, "Historia Argentina I - TEST")
     doc_id = db.agregar_documento(
         materia_id, "Apunte de prueba", "texto", ruta_pdf, texto, ocr_aplicado
     )
+    db.crear_evento(materia_id, "Parcial de prueba", "2026-09-01", "parcial", "Unidades 1 y 2")
     resultados = db.buscar("Revolucion OR Revoluci*")
     print(f"   Resultados de busqueda: {len(resultados)}")
     assert any(r["id"] == doc_id for r in resultados), "El documento deberia aparecer en la busqueda"
+    eventos = db.listar_eventos(materia_id)
+    assert len(eventos) == 1, "El evento del cronograma deberia haberse guardado"
 
-    print("4) Probando IA local (Ollama)...")
-    modelos = ai.modelos_disponibles()
-    print(f"   Modelos disponibles: {modelos}")
-    resumen = ai.resumir(texto, modelo="qwen2.5:1.5b")
-    print(f"   Resumen generado:\n   {resumen}\n")
+    print("4) Probando IA (Claude Code, cuenta Pro)...")
+    if not ai.esta_instalado():
+        print("   Claude Code no esta instalado en esta maquina: se omite el paso de IA.")
+    else:
+        resumen = ai.resumir(texto, modelo="haiku")
+        print(f"   Resumen generado:\n   {resumen}\n")
 
     print("5) Limpiando datos de prueba...")
-    db.eliminar_materia(materia_id)
+    db.eliminar_carrera(carrera_id)
     ruta_pdf.unlink(missing_ok=True)
 
-    print("\nTODO OK: el pipeline de OCR + DB + IA local funciona de punta a punta.")
+    print("\nTODO OK: el pipeline de OCR + DB + cronograma + IA funciona de punta a punta.")
 
 
 if __name__ == "__main__":

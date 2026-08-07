@@ -12,16 +12,14 @@ class ImportWorker(QThread):
     error = Signal(str, str)
     terminado = Signal()
 
-    def __init__(self, materia_id, materia_nombre, rutas_pdf, tipo):
+    def __init__(self, materia_id, rutas_pdf, tipo):
         super().__init__()
         self.materia_id = materia_id
-        self.materia_nombre = materia_nombre
         self.rutas_pdf = rutas_pdf
         self.tipo = tipo
 
     def run(self):
-        destino_dir = db.ARCHIVOS_DIR / self._slug(self.materia_nombre)
-        destino_dir.mkdir(parents=True, exist_ok=True)
+        destino_dir = db.ruta_materia(self.materia_id)
 
         for idx, ruta in enumerate(self.rutas_pdf, start=1):
             origen = Path(ruta)
@@ -47,10 +45,6 @@ class ImportWorker(QThread):
                 self.error.emit(origen.name, str(exc))
 
         self.terminado.emit()
-
-    @staticmethod
-    def _slug(nombre):
-        return "".join(c if c.isalnum() or c in " -_" else "_" for c in nombre).strip()
 
 
 class AIWorker(QThread):
@@ -79,3 +73,11 @@ class AIWorker(QThread):
             self.resultado.emit(resultado)
         except Exception as exc:
             self.error.emit(str(exc))
+
+
+class ConexionIAWorker(QThread):
+    resultado = Signal(bool, str)
+
+    def run(self):
+        ok, mensaje = ai.verificar_conexion()
+        self.resultado.emit(ok, mensaje)
