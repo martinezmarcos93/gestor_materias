@@ -50,6 +50,17 @@ Esto sugiere:
   la perspectiva/enfasis del programa, para que el analisis este orientado a
   "lo que la catedra pide", no un analisis generico.
 
+**Estado: implementado (commit `7af6183`).** El tipo de documento "programa"
+marca el documento eje de la materia; la pestana "Programa" extrae ejes,
+perspectiva y bibliografia obligatoria/opcional con IA; y esa perspectiva se
+inyecta automaticamente como contexto en resumen/preguntas/analisis de
+fuente/consultas sobre cualquier texto de esa materia. Probado con el
+ejemplo de la catedra "progre" — el analisis efectivamente cambio de
+lectura al tener el contexto cargado.
+
+**Pendiente de esto:** cruzar la bibliografia obligatoria/opcional extraida
+contra los documentos ya importados, para mostrar que falta subir.
+
 ## 2. El framing del producto: "asesor academico"
 
 > "la plataforma deberia ser algo asi como un asesor academico"
@@ -89,8 +100,8 @@ incluya esto. Por ahora no hay base para inventar preferencias visuales.
 ## Propuesta de proximo paso concreto
 
 De todo lo anterior, lo unico con suficiente especificidad para implementar
-ya es **(1) el Programa como documento eje de la materia** con extraccion
-asistida por IA de ejes/perspectiva/bibliografia obligatoria-opcional. El
-resto (asesor proactivo, esteticos) son direcciones a tener en cuenta pero
-sin especificacion suficiente todavia — esperan la lista completa de
-Lautaro.
+ya era **(1) el Programa como documento eje de la materia** con extraccion
+asistida por IA de ejes/perspectiva/bibliografia obligatoria-opcional —
+**ya implementado**, ver seccion 1. El resto (asesor proactivo, esteticos)
+son direcciones a tener en cuenta pero sin especificacion suficiente
+todavia — esperan la lista completa de Lautaro.
